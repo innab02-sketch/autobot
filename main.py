@@ -123,3 +123,49 @@ def handle_webhook():
 
     except Exception as e:
         print(f"Error: {e}")
+    return jsonify({"status": "ok"}), 200
+@app.route("/sendpulse", methods=["POST"])
+def handle_sendpulse_webhook():
+    data = request.get_json()
+    print(f"SendPulse webhook: {data}")
+    try:
+        contact = data.get("contact", {})
+        phone = contact.get("phone", "").replace("+", "")
+        text = data.get("message", {}).get("text", "")
+
+        if not text or not phone:
+            return jsonify({"status": "ok"}), 200
+
+        history = get_history(phone)
+        history.append({"role": "user", "content": text})
+
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=SYSTEM_PROMPT,
+            messages=history
+        )
+
+        reply = response.content[0].text
+        add_message(phone, "user", text)
+        add_message(phone, "assistant", reply)
+
+        if "SAVE|" in reply:
+            save_line = [line for line in reply.split("\n") if line.startswith("SAVE|")]
+            if save_line:
+                from sheets import save_lead
+                save_lead(save_line[0])
+            visible_reply = reply.replace(save_line[0], "").strip()
+            send_message(phone, visible_reply)
+        else:
+            send_message(phone, reply)
+
+    except Exception as e:
+        print(f"Error: {e}")
+
+    return jsonify({"status": "ok"}), 200
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
