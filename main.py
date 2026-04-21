@@ -123,7 +123,11 @@ def handle_webhook():
 
     except Exception as e:
         print(f"Error: {e}")
-    return jsonify({"status": "ok"}), 200@app.route("/sendpulse", methods=["POST"])
+
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/sendpulse", methods=["POST"])
 def handle_sendpulse_webhook():
     data = request.get_json()
     try:
