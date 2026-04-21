@@ -3,4 +3,5 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
-CMD ["python", "main.py"]
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "-u", "main.py"]
