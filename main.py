@@ -123,15 +123,20 @@ def handle_webhook():
 
     except Exception as e:
         print(f"Error: {e}")
-    return jsonify({"status": "ok"}), 200
-@app.route("/sendpulse", methods=["POST"])
+    return jsonify({"status": "ok"}), 200@app.route("/sendpulse", methods=["POST"])
 def handle_sendpulse_webhook():
     data = request.get_json()
-    print(f"SendPulse webhook: {data}")
     try:
-        contact = data.get("contact", {})
-        phone = contact.get("phone", "").replace("+", "")
-        text = data.get("message", {}).get("text", "")
+        if not isinstance(data, list) or len(data) == 0:
+            return jsonify({"status": "ok"}), 200
+
+        item = data[0]
+        if item.get("title") != "incoming_message":
+            return jsonify({"status": "ok"}), 200
+
+        contact = item.get("contact", {})
+        phone = contact.get("phone", "").replace("+", "").replace(" ", "")
+        text = contact.get("last_message", "")
 
         if not text or not phone:
             return jsonify({"status": "ok"}), 200
