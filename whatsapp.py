@@ -1,8 +1,8 @@
 import os
 import requests
 
-SENDPULSE_CLIENT_ID = os.getenv("SENDPULSE_CLIENT_ID")
-SENDPULSE_CLIENT_SECRET = os.getenv("SENDPULSE_CLIENT_SECRET")
+SENDPULSE_CLIENT_ID = os.getenv("sp_id_010553fe80126f67561e764600727f2e")
+SENDPULSE_CLIENT_SECRET = os.getenv("sp_sk_dfe6480df3dbdb5b1384e44e15fdef57")
 BOT_ID = "69e09f114ade2ca53a06d540"
 
 
