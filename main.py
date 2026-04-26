@@ -1,6 +1,7 @@
 import os
 import json
 import anthropic
+from datetime import datetime
 from flask import Flask, request, jsonify
 from conversation import get_history, add_message, clear_history
 from whatsapp import send_message
@@ -10,7 +11,13 @@ app = Flask(__name__)
 VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN", "autobot_webhook_2026")
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-SYSTEM_PROMPT = f"""תאריך היום: 20.04.2026, יום ראשון
+HEBREW_WEEKDAYS = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
+
+def get_system_prompt():
+    now = datetime.now()
+    date_str = now.strftime("%d.%m.%Y")
+    day_name = HEBREW_WEEKDAYS[now.weekday()]
+    return f"""תאריך היום: {date_str}, יום {day_name}
 
 ## זהות:
 אתה עוזר וירטואלי של AUTOBOT - חברה שמתמחה באוטומציות עסקיות (WhatsApp, תהליכי מכירה, שירות לקוחות, ואינטגרציות).
@@ -58,7 +65,7 @@ SYSTEM_PROMPT = f"""תאריך היום: 20.04.2026, יום ראשון
 אם לא ברור: "זה נשמע מעניין אבל צריך עוד בירור — בדיוק בשביל זה שיחה עם אריק תועיל."
 
 ## סיום שיחה:
-"מעולה [שם]! העברתי את הפרטים לאריק — הוא יחזור אליך בהקדם בשעות הפעילות (א׳–ה׳, 10:00–18:00).
+"מעולה [שם]! קבענו פגישה עם אריק — תקבל/י אישור עם הפרטים המדויקים.
 בינתיים אם עולות שאלות — אני פה 🙏"
 
 ## שמירת נתונים — חובה:
@@ -103,7 +110,7 @@ def handle_webhook():
         response = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=1024,
-            system=SYSTEM_PROMPT,
+            system=get_system_prompt(),
             messages=history
         )
 
@@ -111,70 +118,10 @@ def handle_webhook():
         add_message(phone, "user", text)
         add_message(phone, "assistant", reply)
 
+        # בדיקה אם יש שורת SAVE
         if "SAVE|" in reply:
             save_line = [line for line in reply.split("\n") if line.startswith("SAVE|")]
             if save_line:
                 from sheets import save_lead
                 save_lead(save_line[0])
-            visible_reply = reply.replace(save_line[0], "").strip()
-            send_message(phone, visible_reply)
-        else:
-            send_message(phone, reply)
-
-    except Exception as e:
-        print(f"Error: {e}")
-
-    return jsonify({"status": "ok"}), 200
-
-
-@app.route("/sendpulse", methods=["POST"])
-def handle_sendpulse_webhook():
-    data = request.get_json()
-    try:
-        if not isinstance(data, list) or len(data) == 0:
-            return jsonify({"status": "ok"}), 200
-
-        item = data[0]
-        if item.get("title") != "incoming_message":
-            return jsonify({"status": "ok"}), 200
-
-        contact = item.get("contact", {})
-        phone = contact.get("phone", "").replace("+", "").replace(" ", "")
-        text = contact.get("last_message", "")
-
-        if not text or not phone:
-            return jsonify({"status": "ok"}), 200
-
-        history = get_history(phone)
-        history.append({"role": "user", "content": text})
-
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            messages=history
-        )
-
-        reply = response.content[0].text
-        add_message(phone, "user", text)
-        add_message(phone, "assistant", reply)
-
-        if "SAVE|" in reply:
-            save_line = [line for line in reply.split("\n") if line.startswith("SAVE|")]
-            if save_line:
-                from sheets import save_lead
-                save_lead(save_line[0])
-            visible_reply = reply.replace(save_line[0], "").strip()
-            send_message(phone, visible_reply)
-        else:
-            send_message(phone, reply)
-
-    except Exception as e:
-        print(f"Error: {e}")
-
-    return jsonify({"status": "ok"}), 200
-
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+                try:
