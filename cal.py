@@ -104,7 +104,7 @@ def create_event(full_name: str, phone: str, start_dt: datetime, end_dt: datetim
         service.events().insert(
             calendarId=AUTOBOT_CALENDAR_ID,
             body=event,
-            sendUpdates="all"
+           sendUpdates="externalOnly"
         ).execute()
         print(f"Meeting created: {full_name} at {start_dt}")
         return True
