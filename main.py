@@ -125,3 +125,36 @@ def handle_webhook():
                 from sheets import save_lead
                 save_lead(save_line[0])
                 try:
+                    parts = save_line[0].replace("SAVE|", "").split("|")
+if len(parts) >= 7:
+                        full_name = parts[0].strip()
+                        availability = parts[5].strip()
+                        client_phone = parts[6].strip()
+                        from cal import book_meeting, parse_availability
+                        booked = book_meeting(full_name, client_phone, availability)
+                        if booked:
+                            result = parse_availability(availability)
+                            if result:
+                                start_dt, _ = result
+                                day_names = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
+                                day = day_names[start_dt.weekday()]
+                                time_str = start_dt.strftime("%H:%M")
+                                date_str = start_dt.strftime("%d.%m")
+                                send_message(phone, f"הפגישה נקבעה! ✅\nיום {day} {date_str} בשעה {time_str}\nאריק יחכה לך 🙌")
+                except Exception as cal_err:
+                    print(f"Calendar booking error: {cal_err}")
+            # שולחים רק את החלק הגלוי ללקוח (בלי שורת SAVE)
+            visible_reply = reply.replace(save_line[0], "").strip()
+            send_message(phone, visible_reply)
+        else:
+            send_message(phone, reply)
+
+    except Exception as e:
+        print(f"Error: {e}")
+
+    return jsonify({"status": "ok"}), 200
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
