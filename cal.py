@@ -113,6 +113,59 @@ def create_event(full_name, phone, start_dt, end_dt):
         return False
 
 
+def get_available_slots(days_ahead=6):
+    try:
+        service = get_service()
+        today = datetime.now()
+        slots = []
+        candidate_hours = [9, 10, 11, 14, 15, 16, 17]
+        days_checked = 0
+        delta = 1
+
+        while days_checked < days_ahead:
+            candidate_day = today + timedelta(days=delta)
+            delta += 1
+            weekday = candidate_day.weekday()
+            if weekday == 5:
+                continue
+            days_checked += 1
+
+            for hour in candidate_hours:
+                if weekday == 4 and hour >= 14:
+                    continue
+                start_dt = candidate_day.replace(hour=hour, minute=0, second=0, microsecond=0)
+                end_dt = start_dt + timedelta(hours=1)
+                utc_start = (start_dt - timedelta(hours=3)).isoformat() + "Z"
+                utc_end = (end_dt - timedelta(hours=3)).isoformat() + "Z"
+                body = {
+                    "timeMin": utc_start,
+                    "timeMax": utc_end,
+                    "items": [{"id": ARIK_CALENDAR_ID}]
+                }
+                result = service.freebusy().query(body=body).execute()
+                busy = result["calendars"][ARIK_CALENDAR_ID]["busy"]
+                if len(busy) == 0:
+                    slots.append(start_dt)
+
+        return slots
+    except Exception as e:
+        print("get_available_slots error: " + str(e))
+        return []
+
+
+def format_slots_for_prompt(slots):
+    if not slots:
+        return "אין מידע על זמינות כרגע"
+    day_names = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
+    lines = []
+    for s in slots:
+        day = day_names[s.weekday()]
+        date_str = s.strftime("%d.%m")
+        time_str = s.strftime("%H:%M")
+        lines.append("יום " + day + " " + date_str + " בשעה " + time_str)
+    return "\n".join(lines)
+
+
 def book_meeting(full_name, phone, availability_str):
     result = parse_availability(availability_str)
     if not result:
