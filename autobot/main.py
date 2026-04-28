@@ -157,6 +157,15 @@ def handle_webhook():
     return jsonify({"status": "ok"}), 200
 
 
+@app.route("/admin/clear/<phone>", methods=["GET"])
+def admin_clear(phone):
+    token = request.args.get("token", "")
+    if token != VERIFY_TOKEN:
+        return "Forbidden", 403
+    clear_history(phone)
+    return f"History cleared for {phone}", 200
+
+
 def book_calendar(phone, save_line):
     try:
         parts = save_line.replace("SAVE|", "").split("|")
