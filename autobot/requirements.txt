@@ -1,0 +1,6 @@
+flask==3.0.3
+anthropic>=0.40.0
+requests==2.32.3
+gspread==6.1.2
+google-auth==2.30.0
+google-api-python-client==2.126.0
