@@ -71,14 +71,21 @@ def is_arik_available(start_dt, end_dt):
         service = get_service()
         utc_start = (start_dt - timedelta(hours=3)).isoformat() + "Z"
         utc_end = (end_dt - timedelta(hours=3)).isoformat() + "Z"
+        items = [{"id": ARIK_CALENDAR_ID}]
+        if AUTOBOT_CALENDAR_ID and AUTOBOT_CALENDAR_ID != ARIK_CALENDAR_ID:
+            items.append({"id": AUTOBOT_CALENDAR_ID})
         body = {
             "timeMin": utc_start,
             "timeMax": utc_end,
-            "items": [{"id": ARIK_CALENDAR_ID}]
+            "items": items
         }
         result = service.freebusy().query(body=body).execute()
-        busy = result["calendars"][ARIK_CALENDAR_ID]["busy"]
-        return len(busy) == 0
+        for item in items:
+            cal_id = item["id"]
+            busy = result["calendars"].get(cal_id, {}).get("busy", [])
+            if len(busy) > 0:
+                return False
+        return True
     except Exception as e:
         print("Freebusy error: " + str(e))
         return True
@@ -137,14 +144,20 @@ def get_available_slots(days_ahead=6):
                 end_dt = start_dt + timedelta(hours=1)
                 utc_start = (start_dt - timedelta(hours=3)).isoformat() + "Z"
                 utc_end = (end_dt - timedelta(hours=3)).isoformat() + "Z"
+                items = [{"id": ARIK_CALENDAR_ID}]
+                if AUTOBOT_CALENDAR_ID and AUTOBOT_CALENDAR_ID != ARIK_CALENDAR_ID:
+                    items.append({"id": AUTOBOT_CALENDAR_ID})
                 body = {
                     "timeMin": utc_start,
                     "timeMax": utc_end,
-                    "items": [{"id": ARIK_CALENDAR_ID}]
+                    "items": items
                 }
                 result = service.freebusy().query(body=body).execute()
-                busy = result["calendars"][ARIK_CALENDAR_ID]["busy"]
-                if len(busy) == 0:
+                is_free = all(
+                    len(result["calendars"].get(item["id"], {}).get("busy", [])) == 0
+                    for item in items
+                )
+                if is_free:
                     slots.append(start_dt)
 
         return slots
