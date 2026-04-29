@@ -19,20 +19,21 @@ def get_sheet():
 def save_lead(save_line: str):
     """
     מקבל שורה בפורמט:
-    SAVE|full_name|business_type|business_size|main_challenge|previous_attempts|availability|phone
+    SAVE|full_name|business_type|business_size|main_challenge|previous_attempts|availability|phone|email
     """
     try:
         parts = save_line.replace("SAVE|", "").split("|")
-        while len(parts) < 7:
+        while len(parts) < 8:
             parts.append("-")
 
-        full_name, business_type, business_size, main_challenge, previous_attempts, availability, phone = parts[:7]
+        full_name, business_type, business_size, main_challenge, previous_attempts, availability, phone, email = parts[:8]
 
         sheet = get_sheet()
         sheet.append_row([
             datetime.now().strftime("%d.%m.%Y"),
             full_name.strip(),
             phone.strip(),
+            email.strip(),
             business_type.strip(),
             main_challenge.strip(),
             previous_attempts.strip(),
