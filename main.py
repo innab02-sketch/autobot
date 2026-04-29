@@ -149,6 +149,10 @@ def test_email():
     to = request.args.get("to", "")
     if not to:
         return "Missing ?to=email", 400
+    gmail_user = os.getenv("GMAIL_USER", "")
+    gmail_pass = os.getenv("GMAIL_APP_PASSWORD", "")
+    if not gmail_user or not gmail_pass:
+        return f"Missing env vars: GMAIL_USER={'set' if gmail_user else 'MISSING'}, GMAIL_APP_PASSWORD={'set' if gmail_pass else 'MISSING'}", 200
     from email_sender import send_confirmation_email
     ok = send_confirmation_email(to, "בדיקה", "יום שלישי 29.04 בשעה 10:00")
     return ("Email sent OK" if ok else "Email FAILED — check logs"), 200
