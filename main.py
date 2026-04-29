@@ -178,7 +178,7 @@ def book_calendar(phone, save_line):
         client_phone = parts[6].strip()
         client_email = parts[7].strip() if len(parts) > 7 else ""
         from cal import book_meeting
-        booked, start_dt = book_meeting(full_name, client_phone, availability)
+        booked, start_dt = book_meeting(full_name, client_phone, availability, client_email)
         if booked and start_dt:
             day_names = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
             day = day_names[start_dt.weekday()]

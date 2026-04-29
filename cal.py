@@ -91,15 +91,18 @@ def is_arik_available(start_dt, end_dt):
         return True
 
 
-def create_event(full_name, phone, start_dt, end_dt):
+def create_event(full_name, phone, start_dt, end_dt, client_email=""):
     try:
         service = get_service()
+        attendees = [{"email": ARIK_CALENDAR_ID}]
+        if client_email and "@" in client_email:
+            attendees.append({"email": client_email})
         event = {
             "summary": "שיחת ייעוץ - " + full_name,
             "description": "טלפון: " + phone + "\nנקבע אוטומטית על ידי AUTOBOT",
             "start": {"dateTime": start_dt.isoformat(), "timeZone": "Asia/Jerusalem"},
             "end": {"dateTime": end_dt.isoformat(), "timeZone": "Asia/Jerusalem"},
-            "attendees": [{"email": ARIK_CALENDAR_ID}],
+            "attendees": attendees,
             "reminders": {
                 "useDefault": False,
                 "overrides": [
@@ -111,7 +114,7 @@ def create_event(full_name, phone, start_dt, end_dt):
         service.events().insert(
             calendarId=AUTOBOT_CALENDAR_ID,
             body=event,
-            sendUpdates="externalOnly"
+            sendUpdates="all"
         ).execute()
         print("Meeting created: " + full_name + " at " + str(start_dt))
         return True
@@ -179,7 +182,7 @@ def format_slots_for_prompt(slots):
     return "\n".join(lines)
 
 
-def book_meeting(full_name, phone, availability_str):
+def book_meeting(full_name, phone, availability_str, client_email=""):
     result = parse_availability(availability_str)
     if not result:
         print("Could not parse availability: " + availability_str)
@@ -188,7 +191,7 @@ def book_meeting(full_name, phone, availability_str):
     start_dt, end_dt = result
 
     if is_arik_available(start_dt, end_dt):
-        booked = create_event(full_name, phone, start_dt, end_dt)
+        booked = create_event(full_name, phone, start_dt, end_dt, client_email)
         if booked:
             from sheets import save_reminder
             save_reminder(phone, start_dt)
