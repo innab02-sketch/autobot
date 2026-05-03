@@ -131,6 +131,10 @@ def test_calendar():
         
     except Exception as e:
         return f"❌ Calendar error: {e}"
+@app.route('/test-calendar')
+def test_calendar():
+    return "Calendar test route works!"
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
