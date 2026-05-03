@@ -100,7 +100,37 @@ def handle_sendpulse():
 @app.route("/", methods=["GET"])
 def health():
     return "AUTOBOT is running", 200
-
+@app.route('/test-calendar')
+def test_calendar():
+    import os
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    import json
+    
+    try:
+        # טעינת credentials
+        creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+        creds_dict = json.loads(creds_json)
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=['https://www.googleapis.com/auth/calendar']
+        )
+        service = build('calendar', 'v3', credentials=credentials)
+        
+        # בדיקת היומן של אריק
+        arik_calendar = os.getenv('ARIK_CALENDAR_ID', 'arik@roiescalator.com')
+        
+        # נסיון לקרוא אירועים מהיומן
+        events = service.events().list(
+            calendarId=arik_calendar,
+            maxResults=5,
+            singleEvents=True
+        ).execute()
+        
+        return f"✅ Calendar accessible! Found {len(events.get('items', []))} events in {arik_calendar}"
+        
+    except Exception as e:
+        return f"❌ Calendar error: {e}"
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
