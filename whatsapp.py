@@ -7,7 +7,7 @@ BOT_ID = "69e09f114ade2ca53a06d540"
 
 
 def get_token():
-    resp = requests.post("https://api.sendpulse.com/oauth/access_token", json={
+    resp = requests.post("https://oauth.sendpulse.com/access_token", json={
         "grant_type": "client_credentials",
         "client_id": SENDPULSE_CLIENT_ID,
         "client_secret": SENDPULSE_CLIENT_SECRET
