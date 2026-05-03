@@ -136,6 +136,11 @@ def debug_sheets():
 def health():
     return "AUTOBOT is running", 200
 
+@app.route("/check-cal")
+def check_cal():
+    import os
+    return {"arik": os.getenv("ARIK_CALENDAR_ID"), "autobot": os.getenv("AUTOBOT_CALENDAR_ID")}
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
