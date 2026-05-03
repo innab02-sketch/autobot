@@ -124,20 +124,26 @@ def find_available_slots(date, preferred_hours=None):
     מוצא שעות פנויות ביום מסוים
     
     Args:
-        date: datetime של היום המבוקש
+        date: date או datetime של היום המבוקש
         preferred_hours: רשימה של שעות מועדפות (למשל [18, 19, 20])
     
     Returns:
         list של datetime פנויים
     """
     if preferred_hours is None:
-        preferred_hours = [18, 19, 20]  # ברירת מחדל - ערב
+        preferred_hours = [18, 19, 20]
     
     arik_cal = os.getenv('ARIK_CALENDAR_ID')
     available = []
     
     for hour in preferred_hours:
-        slot_start = date.replace(hour=hour, minute=0, second=0, microsecond=0)
+        # המרה ל-datetime אם זה date
+        if isinstance(date, datetime):
+            slot_start = date.replace(hour=hour, minute=0, second=0, microsecond=0)
+        else:
+            # אם זה date object - ניצור datetime חדש
+            slot_start = datetime.combine(date, datetime.min.time()).replace(hour=hour, minute=0)
+        
         slot_end = slot_start + timedelta(minutes=30)
         
         if check_availability(arik_cal, slot_start, slot_end):
