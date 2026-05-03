@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from conversation import get_history, add_message, clear_history
 from whatsapp import send_message
+from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
 
@@ -97,50 +98,25 @@ def handle_sendpulse():
     
     return jsonify({"status": "ok"}), 200
 
-@app.route("/debug-sheets", methods=["GET"])
-def debug_sheets():
-    import os, json
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
-    
-    result = {}
-    sheet_id = os.getenv('GOOGLE_SHEET_ID')
-    result['sheet_id'] = sheet_id
-    
+@app.route("/twilio-webhook", methods=["POST"])
+def handle_twilio():
     try:
-        creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
-        creds_dict = json.loads(creds_json)
-        result['json_valid'] = True
-        result['client_email'] = creds_dict.get('client_email')
-    except Exception as e:
-        result['json_valid'] = False
-        result['error'] = str(e)
-        return result
-    
-    try:
-        credentials = service_account.Credentials.from_service_account_info(
-            creds_dict,
-            scopes=['https://www.googleapis.com/auth/spreadsheets']
-        )
-        service = build('sheets', 'v4', credentials=credentials)
-        spreadsheet = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
-        result['success'] = True
-        result['sheet_title'] = spreadsheet['properties']['title']
-    except Exception as e:
-        result['success'] = False
-        result['error'] = str(e)
-    
-    return result
-
-@app.route("/", methods=["GET"])
-def health():
-    return "AUTOBOT is running", 200
-
-@app.route("/check-cal")
-def check_cal():
-    import os
-    return {"arik": os.getenv("ARIK_CALENDAR_ID"), "autobot": os.getenv("AUTOBOT_CALENDAR_ID")}
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+        # קבלת הנתונים מ-Twilio
+        incoming_msg = request.values.get('Body', '').strip()
+        from_number = request.values.get('From', '')
+        
+        # ניקוי המספר (Twilio שולח whatsapp:+972...)
+        phone = from_number.replace('whatsapp:', '')
+        
+        if not incoming_msg or not phone:
+            return str(MessagingResponse()), 200
+        
+        print(f"Twilio message from {phone}: {incoming_msg}")
+        
+        # שליפת היסטוריה
+        history = get_history(phone)
+        history.append({"role": "user", "content": incoming_msg})
+        
+        # שליחה ל-Claude
+        response = client.messages.create(
+            model="claude-
