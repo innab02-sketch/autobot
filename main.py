@@ -119,4 +119,4 @@ def handle_twilio():
         
         # שליחה ל-Claude
         response = client.messages.create(
-            model="claude-
+        model="claude-sonnet-4-20250514",
