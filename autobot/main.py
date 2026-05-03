@@ -4,7 +4,7 @@ import anthropic
 from datetime import datetime
 from flask import Flask, request, jsonify
 from conversation import get_history, add_message, clear_history
-from whatsapp import send_message
+from whatsapp import send_message, send_message_by_contact
 
 app = Flask(__name__)
 
@@ -74,7 +74,6 @@ def get_system_prompt():
 - טון ישיר וחברי - לא פורמלי
 - אל תציע פתרונות טכניים
 - מקסימום 1-2 אימוגי'ים למסר
-- **אסור לאסוף כתובת מייל — לא שואלים, לא מזכירים**
 - **אסור לטעון ששלחת מייל, הודעה, או כל דבר אחר שלא שלחת בפועל**
 
 ## שלב הסיכום:
@@ -166,6 +165,65 @@ def handle_webhook():
 
     except Exception as e:
         print(f"Error: {e}")
+
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/sendpulse", methods=["POST"])
+def handle_sendpulse():
+    data = request.get_json()
+    try:
+        # SendPulse sends an array
+        if isinstance(data, list):
+            data = data[0]
+
+        title = data.get("title", "")
+        if title != "incoming_message":
+            return jsonify({"status": "ok"}), 200
+
+        contact = data.get("contact", {})
+        contact_id = contact.get("id", "")
+        phone = contact.get("phone", "") or contact.get("variables", {}).get("Phone", "")
+        text = contact.get("last_message", "")
+
+        session_key = contact_id or phone
+        if not session_key or not text:
+            return jsonify({"status": "ok"}), 200
+
+        history = get_history(session_key)
+        history.append({"role": "user", "content": text})
+
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=get_system_prompt(),
+            messages=history
+        )
+
+        reply = response.content[0].text
+        add_message(session_key, "user", text)
+        add_message(session_key, "assistant", reply)
+
+        def reply_to_user(msg):
+            if contact_id:
+                send_message_by_contact(contact_id, msg)
+            else:
+                send_message(phone, msg)
+
+        if "SAVE|" in reply:
+            save_lines = [line for line in reply.split("\n") if line.startswith("SAVE|")]
+            if save_lines:
+                save_line = save_lines[0]
+                from sheets import save_lead
+                save_lead(save_line)
+                book_calendar(session_key, save_line)
+                visible_reply = reply.replace(save_line, "").strip()
+                reply_to_user(visible_reply)
+        else:
+            reply_to_user(reply)
+
+    except Exception as e:
+        print(f"SendPulse webhook error: {e}")
 
     return jsonify({"status": "ok"}), 200
 

@@ -29,3 +29,21 @@ def send_message(to: str, text: str):
     if not response.ok:
         print(f"WhatsApp send error: {response.text}")
     return response
+
+
+def send_message_by_contact(contact_id: str, text: str):
+    token = get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {
+        "bot_id": BOT_ID,
+        "contact_id": contact_id,
+        "message": {"type": "text", "text": {"body": text}}
+    }
+    response = requests.post(
+        "https://api.sendpulse.com/whatsapp/contacts/send",
+        headers=headers,
+        json=payload
+    )
+    if not response.ok:
+        print(f"WhatsApp send error: {response.text}")
+    return response

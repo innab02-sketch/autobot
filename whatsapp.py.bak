@@ -46,29 +46,3 @@ def send_message(to: str, text: str):
     )
     print(f"SendPulse response: {response.status_code} - {response.text[:200]}")
     return response
-
-
-def send_message_by_contact(contact_id: str, text: str):
-    token = get_token()
-    if not token:
-        print("ERROR: Could not get SendPulse token")
-        return
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "bot_id": BOT_ID,
-        "contact_id": contact_id,
-        "message": {
-            "type": "text",
-            "text": text
-        }
-    }
-    response = requests.post(
-        "https://api.sendpulse.com/whatsapp/contacts/send",
-        headers=headers,
-        json=payload
-    )
-    print(f"SendPulse response: {response.status_code} - {response.text[:200]}")
-    return response
