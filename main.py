@@ -119,4 +119,82 @@ def handle_twilio():
         
         # שליחה ל-Claude
         response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            system=get_system_prompt(),
+            messages=history
+        )
+        
+        reply = response.content[0].text
+        
+        # שמירת ההודעות
+        add_message(phone, "user", incoming_msg)
+        add_message(phone, "assistant", reply)
+        
+        # בדיקה אם צריך לשמור ב-Sheets
+        if "SAVE|" in reply:
+            save_lines = [l for l in reply.split("\n") if l.startswith("SAVE|")]
+            if save_lines:
+                from sheets import save_lead
+                save_lead(save_lines[0])
+                reply = reply.replace(save_lines[0], "").strip()
+        
+        # תשובה ל-Twilio
+        resp = MessagingResponse()
+        resp.message(reply)
+        
+        return str(resp), 200
+        
+    except Exception as e:
+        print(f"Twilio webhook error: {e}")
+        resp = MessagingResponse()
+        resp.message("סליחה, יש לי בעיה טכנית. ננסה שוב בעוד רגע.")
+        return str(resp), 200
+
+@app.route("/debug-sheets", methods=["GET"])
+def debug_sheets():
+    import os, json
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    
+    result = {}
+    sheet_id = os.getenv('GOOGLE_SHEET_ID')
+    result['sheet_id'] = sheet_id
+    
+    try:
+        creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+        creds_dict = json.loads(creds_json)
+        result['json_valid'] = True
+        result['client_email'] = creds_dict.get('client_email')
+    except Exception as e:
+        result['json_valid'] = False
+        result['error'] = str(e)
+        return result
+    
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=['https://www.googleapis.com/auth/spreadsheets']
+        )
+        service = build('sheets', 'v4', credentials=credentials)
+        spreadsheet = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+        result['success'] = True
+        result['sheet_title'] = spreadsheet['properties']['title']
+    except Exception as e:
+        result['success'] = False
+        result['error'] = str(e)
+    
+    return result
+
+@app.route("/", methods=["GET"])
+def health():
+    return "AUTOBOT is running", 200
+
+@app.route("/check-cal")
+def check_cal():
+    import os
+    return {"arik": os.getenv("ARIK_CALENDAR_ID"), "autobot": os.getenv("AUTOBOT_CALENDAR_ID")}
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
