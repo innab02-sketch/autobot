@@ -1,76 +1,43 @@
 import os
-import requests
+from twilio.rest import Client
 
-def get_token():
+def send_message(to_phone, message_body):
+    """
+    שליחת הודעת WhatsApp דרך Twilio
+    """
     try:
-        # נסיון עם ה-URL הישן
-        url = "https://oauth.sendpulse.com/access_token"
-        payload = {
-            "grant_type": "client_credentials",
-            "client_id": os.getenv("SENDPULSE_CLIENT_ID"),
-            "client_secret": os.getenv("SENDPULSE_CLIENT_SECRET")
-        }
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        from_whatsapp = os.getenv("TWILIO_WHATSAPP_NUMBER")
         
-        print(f"Trying to get token from: {url}")
-        resp = requests.post(url, json=payload, timeout=30)
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            token = data.get("access_token")
-            print(f"✅ Got token: {token[:20]}...")
-            return token
-        else:
-            print(f"❌ Token failed: {resp.status_code} - {resp.text}")
-            return None
-            
-    except Exception as e:
-        print(f"❌ Token exception: {e}")
-        return None
-
-def send_message(phone, text):
-    """Send WhatsApp message via SendPulse API"""
-    token = get_token()
-    if not token:
-        print("No token, cannot send message")
-        return False
-    
-    # SendPulse API endpoint for sending messages
-    url = "https://api.sendpulse.com/whatsapp/send"
-    
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "phone": phone,
-        "text": text
-    }
-    
-    try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        if resp.status_code == 200:
-            print(f"✅ Message sent to {phone}")
-            return True
-        else:
-            print(f"❌ Send failed: {resp.status_code} - {resp.text}")
+        if not account_sid or not auth_token or not from_whatsapp:
+            print("❌ Missing Twilio credentials")
             return False
+        
+        print(f"📤 Sending message to {to_phone}")
+        print(f"   Message: {message_body[:50]}...")
+        
+        client = Client(account_sid, auth_token)
+        
+        # וידוא שהמספרים בפורמט הנכון של Twilio
+        if not to_phone.startswith("whatsapp:"):
+            to_phone = f"whatsapp:{to_phone}"
+        if not from_whatsapp.startswith("whatsapp:"):
+            from_whatsapp = f"whatsapp:{from_whatsapp}"
+        
+        message = client.messages.create(
+            body=message_body,
+            from_=from_whatsapp,
+            to=to_phone
+        )
+        
+        print(f"✅ Message sent! SID: {message.sid}")
+        return True
+        
     except Exception as e:
-        print(f"❌ Send exception: {e}")
+        print(f"❌ Error sending message: {e}")
         return False
 
 def send_message_by_contact(contact_id, text):
-    """Alternative method using contact ID"""
-    token = get_token()
-    if not token:
-        return False
-    
-    url = "https://api.sendpulse.com/whatsapp/send"
-    headers = {"Authorization": f"Bearer {token}"}
-    payload = {"contact_id": contact_id, "text": text}
-    
-    try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        return resp.status_code == 200
-    except:
-        return False
+    """פונקציה זהה ל-send_message עבור תאימות"""
+    return send_message(contact_id, text)
