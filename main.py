@@ -396,7 +396,6 @@ def debug_check():
     history = get_history(phone)
     history.append({"role": "user", "content": text})
 
-    print("Calling Claude AI...")
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1024,
@@ -405,25 +404,19 @@ def debug_check():
     )
 
     reply = response.content[0].text
-    print(f"Claude reply (first 300 chars): {reply[:300]}")
-    print(f"Contains SAVE|: {'SAVE|' in reply}")
-    
     add_message(phone, "user", text)
     add_message(phone, "assistant", reply)
 
     if "SAVE|" in reply:
-        print("!!! SAVE LINE DETECTED !!!")
         save_lines = [line for line in reply.split("\n") if line.startswith("SAVE|")]
         if save_lines:
             save_line = save_lines[0]
-            print(f"SAVE line: {save_line}")
             from sheets import save_lead
             save_lead(save_line)
             book_calendar(phone, save_line)
             visible_reply = reply.replace(save_line, "").strip()
             send_message(phone, visible_reply)
     else:
-        print("No SAVE line - sending normal reply")
         send_message(phone, reply)
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
