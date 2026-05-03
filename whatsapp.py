@@ -4,7 +4,7 @@ import requests
 def get_token():
     try:
         # נסיון עם ה-URL הישן
-        url = "https://api.sendpulse.com/oauth/access_token"
+        url = "https://oauth.sendpulse.com/access_token"
         payload = {
             "grant_type": "client_credentials",
             "client_id": os.getenv("SENDPULSE_CLIENT_ID"),
