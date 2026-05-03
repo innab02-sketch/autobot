@@ -213,30 +213,46 @@ def handle_twilio():
         phone = from_number.replace('whatsapp:', '')
         
         if not incoming_msg or not phone:
+            print("⚠️ Missing message or phone")
             return str(MessagingResponse()), 200
         
-        print(f"Twilio message from {phone}: {incoming_msg}")
+        print(f"📨 Twilio message from {phone}: {incoming_msg}")
         
         history = get_history(phone)
         history.append({"role": "user", "content": incoming_msg})
         
+        print(f"🤖 Sending to Claude...")
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=1024,
             system=get_system_prompt(),
             messages=history
         )
         
         reply = response.content[0].text
+        print(f"✅ Claude replied: {reply[:100]}...")
         
         add_message(phone, "user", incoming_msg)
         add_message(phone, "assistant", reply)
+        print(f"💾 Messages saved")
         
         reply = process_bot_response(phone, reply)
+        print(f"🔧 After processing: {reply[:100]}...")
         
         resp = MessagingResponse()
         resp.message(reply)
         
+        twiml_str = str(resp)
+        print(f"📤 Sending TwiML response: {twiml_str[:200]}...")
+        
+        return twiml_str, 200
+        
+    except Exception as e:
+        print(f"❌ Twilio webhook error: {e}")
+        import traceback
+        traceback.print_exc()
+        resp = MessagingResponse()
+        resp.message("סליחה, יש לי בעיה טכנית. ננסה שוב בעוד רגע.")
         return str(resp), 200
         
     except Exception as e:
