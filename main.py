@@ -341,7 +341,49 @@ def handle_sendpulse():
 def health():
     return "AUTOBOT is running", 200
 
-
+@app.route('/debug-sheets', methods=['GET'])
+def debug_sheets():
+    """בדיקת גישה ל-Google Sheets"""
+    import os, json
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    
+    result = {}
+    
+    # 1. בדיקת SHEET_ID
+    sheet_id = os.getenv('GOOGLE_SHEET_ID')
+    result['sheet_id'] = sheet_id
+    
+    # 2. בדיקת JSON credentials
+    try:
+        creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+        creds_dict = json.loads(creds_json)
+        result['json_valid'] = True
+        result['client_email'] = creds_dict.get('client_email')
+        result['project_id'] = creds_dict.get('project_id')
+    except Exception as e:
+        result['json_valid'] = False
+        result['json_error'] = str(e)
+        return result
+    
+    # 3. ניסיון גישה ל-Sheet
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=['https://www.googleapis.com/auth/spreadsheets']
+        )
+        service = build('sheets', 'v4', credentials=credentials)
+        spreadsheet = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+        result['success'] = True
+        result['sheet_title'] = spreadsheet['properties']['title']
+        result['sheet_url'] = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
+    except Exception as e:
+        result['success'] = False
+        result['error'] = str(e)
+        if hasattr(e, 'status_code'):
+            result['status_code'] = e.status_code
+    
+    return result
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
