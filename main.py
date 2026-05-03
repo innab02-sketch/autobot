@@ -27,7 +27,7 @@ def get_system_prompt():
     }
     today_name = weekday_he.get(today.strftime('%A'), today.strftime('%A'))
     
-    prompt = f"""אתה עוזר וירטואלי של AUTOBOT - מומחה באוטומציות WhatsApp ושירות לקוחות.
+    return f"""אתה עוזר וירטואלי של AUTOBOT - מומחה באוטומציות WhatsApp ושירות לקוחות.
 
 היום הוא: {today.strftime('%d/%m/%Y')} - יום {today_name}
 
@@ -38,32 +38,7 @@ def get_system_prompt():
    - "רביעי ב-18:00" אם היום {today_name} = רביעי הקרוב
    - תמיד שלח: CHECK_AVAILABILITY|YYYY-MM-DD|HH:MM
    
-3. בסוף שלח: SAVE|שם|עסק|גודל|אתגר|ניסיון|זמינות|טלפון|מייל
-"""
-    return prompt
-דוגמה לשיחה:
-לקוח: "שלום"
-את/ה: "היי! שמחה לעזור 😊 מה השם שלך?"
-לקוח: "אני דני"
-את/ה: "נעים מאוד דני! מה מספר הטלפון שלך?"
-...
-לקוח: "אני פנוי ביום שלישי בשעה 18:00"
-את/ה: (מחשב שהיום זה {today.strftime('%d/%m/%Y')} ושלישי הקרוב זה...) 
-      "CHECK_AVAILABILITY|2026-05-06|18:00"
-"""
-
-4. אחרי שתקבל תשובה על הזמינות - שמור את כל הפרטים בפורמט:
-   SAVE|שם מלא|תחום עסק|גודל עסק|אתגר|ניסיונות קודמים|זמינות|טלפון|מייל
-
-דוגמה לשיחה:
-לקוח: "שלום"
-את/ה: "היי! שמחה לעזור 😊 מה השם שלך?"
-לקוח: "אני דני"
-את/ה: "נעים מאוד דני! מה מספר הטלפון שלך?"
-...
-לקוח: "אני פנוי ביום שלישי בשעה 18:00"
-את/ה: "CHECK_AVAILABILITY|2026-05-06|18:00"
-"""
+3. בסוף שלח: SAVE|שם|עסק|גודל|אתגר|ניסיון|זמינות|טלפון|מייל"""
 
 def check_reminders():
     """בדיקת תזכורות כל דקה"""
@@ -89,6 +64,8 @@ reminder_thread.start()
 def process_bot_response(phone, reply):
     """עיבוד תשובת הבוט - טיפול ב-CHECK_AVAILABILITY ו-SAVE"""
     
+    check_line = None
+    
     # בדיקת זמינות
     if "CHECK_AVAILABILITY|" in reply:
         try:
@@ -99,26 +76,21 @@ def process_bot_response(phone, reply):
             parts = check_line.replace("CHECK_AVAILABILITY|", "").split("|")
             
             if len(parts) >= 2:
-                date_str = parts[0].strip()  # YYYY-MM-DD
-                time_str = parts[1].strip()  # HH:MM
+                date_str = parts[0].strip()
+                time_str = parts[1].strip()
                 
-                # המרה ל-datetime
                 meeting_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
                 meeting_end = meeting_dt + timedelta(minutes=30)
                 
                 arik_cal = os.getenv('ARIK_CALENDAR_ID')
                 
-                # בדיקת זמינות
-                from calendar_helper import check_availability
                 is_available = check_availability(arik_cal, meeting_dt, meeting_end)
                 
                 if is_available:
-                    # קביעת פגישה
                     history = get_history(phone)
                     client_name = "לקוח"
                     client_email = ""
                     
-                    # חיפוש שם ומייל בהיסטוריה
                     for msg in history:
                         if msg['role'] == 'user':
                             if '@' in msg['content']:
@@ -126,7 +98,6 @@ def process_bot_response(phone, reply):
                             elif len(msg['content'].split()) <= 3 and not any(char.isdigit() for char in msg['content']):
                                 client_name = msg['content'].strip()
                     
-                    from calendar_helper import create_meeting
                     meeting_info = create_meeting(
                         client_name=client_name,
                         client_phone=phone,
@@ -136,23 +107,16 @@ def process_bot_response(phone, reply):
                     )
                     
                     if meeting_info:
-                        # שמירת תזכורת
                         save_reminder(phone, meeting_dt)
-                        
-                        # הסרת שורת CHECK והוספת הודעת אישור
                         reply = reply.replace(check_line, "").strip()
                         reply += f"\n\n✅ מעולה! הפגישה נקבעה ליום {meeting_dt.strftime('%d/%m/%Y')} בשעה {meeting_dt.strftime('%H:%M')}.\n"
                         reply += f"אריק יצור איתך קשר בזמן הפגישה 📞\n"
-                        reply += f"תקבל תזכורת 20 דקות לפני הפגישה."
+                        reply += f"תקבלי תזכורת 20 דקות לפני הפגישה."
                     else:
                         reply = reply.replace(check_line, "").strip()
-                        reply += "\n\nמצטער, הייתה בעיה בקביעת הפגישה. אריק יחזור אליך בהקדם."
+                        reply += "\n\nמצטערת, הייתה בעיה בקביעת הפגישה. אריק יחזור אליך בהקדם."
                 else:
-                    # אריק עסוק - הצעת שעות חלופיות
                     reply = reply.replace(check_line, "").strip()
-                    
-                    from calendar_helper import find_available_slots
-                    # חיפוש שעות פנויות באותו יום
                     available_slots = find_available_slots(
                         meeting_dt.date(),
                         preferred_hours=[18, 19, 20, 21]
@@ -168,8 +132,9 @@ def process_bot_response(phone, reply):
                         
         except Exception as e:
             print(f"CHECK_AVAILABILITY error: {e}")
-            reply = reply.replace(check_line, "").strip()
-            reply += "\n\nמצטער, הייתה בעיה בבדיקת הזמינות. אריק יחזור אליך בהקדם."
+            if check_line:
+                reply = reply.replace(check_line, "").strip()
+            reply += "\n\nמצטערת, הייתה בעיה בבדיקת הזמינות. אריק יחזור אליך בהקדם."
     
     # שמירת ליד
     if "SAVE|" in reply:
@@ -229,7 +194,6 @@ def handle_sendpulse():
             add_message(phone, "user", text)
             add_message(phone, "assistant", reply)
             
-            # עיבוד תשובה
             reply = process_bot_response(phone, reply)
             
             send_message(phone, reply)
@@ -268,7 +232,6 @@ def handle_twilio():
         add_message(phone, "user", incoming_msg)
         add_message(phone, "assistant", reply)
         
-        # עיבוד תשובה (CHECK_AVAILABILITY + SAVE)
         reply = process_bot_response(phone, reply)
         
         resp = MessagingResponse()
