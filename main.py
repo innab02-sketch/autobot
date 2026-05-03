@@ -382,7 +382,15 @@ def debug_sheets():
         result['error'] = str(e)
         if hasattr(e, 'status_code'):
             result['status_code'] = e.status_code
-    
+    @app.route('/debug-calendar-vars', methods=['GET'])
+def debug_calendar_vars():
+    """בדיקת משתני יומן"""
+    import os
+    return {
+        "ARIK_CALENDAR_ID": os.getenv("ARIK_CALENDAR_ID"),
+        "AUTOBOT_CALENDAR_ID": os.getenv("AUTOBOT_CALENDAR_ID"),
+        "both_set": bool(os.getenv("ARIK_CALENDAR_ID")) and bool(os.getenv("AUTOBOT_CALENDAR_ID"))
+    }
     return result
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
