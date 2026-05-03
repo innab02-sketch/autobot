@@ -382,7 +382,13 @@ def debug_sheets():
         result['error'] = str(e)
         if hasattr(e, 'status_code'):
             result['status_code'] = e.status_code
-
+@app.route('/debug-check')
+def debug_check():
+    import os
+    return {
+        "arik": os.getenv("ARIK_CALENDAR_ID"),
+        "autobot": os.getenv("AUTOBOT_CALENDAR_ID")
+    }
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
