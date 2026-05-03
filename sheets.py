@@ -123,3 +123,64 @@ def mark_reminder_sent(row_number: int):
         print(f"Reminder row {row_number} marked as sent")
     except Exception as e:
         print(f"mark_reminder_sent error: {e}")
+def save_lead(save_line):
+    """שמירת ליד ב-Google Sheets"""
+    try:
+        # פירוש ה-SAVE line
+        parts = save_line.replace("SAVE|", "").split("|")
+        if len(parts) < 7:
+            print(f"Invalid SAVE line: {save_line}")
+            return False
+        
+        full_name = parts[0].strip()
+        business_type = parts[1].strip()
+        business_size = parts[2].strip()
+        challenge = parts[3].strip()
+        previous_attempts = parts[4].strip()
+        availability = parts[5].strip()
+        phone = parts[6].strip()
+        email = parts[7].strip() if len(parts) > 7 else ""
+        
+        # התחברות ל-Sheets
+        import os, json
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        
+        creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+        creds_dict = json.loads(creds_json)
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=['https://www.googleapis.com/auth/spreadsheets']
+        )
+        service = build('sheets', 'v4', credentials=credentials)
+        sheet_id = os.getenv('GOOGLE_SHEET_ID')
+        
+        # הוספת שורה חדשה
+        row = [datetime.now().strftime("%Y-%m-%d %H:%M"), full_name, phone, email, 
+               business_type, business_size, challenge, previous_attempts, availability, "חדש"]
+        
+        # ניסיון להוסיף לדף leads
+        try:
+            service.spreadsheets().values().append(
+                spreadsheetId=sheet_id,
+                range="leads!A:J",
+                valueInputOption="USER_ENTERED",
+                body={"values": [row]}
+            ).execute()
+            print(f"✅ Lead saved: {full_name} ({phone})")
+        except:
+            # אם דף leads לא קיים, ניצור אותו
+            body = {"requests": [{"addSheet": {"properties": {"title": "leads"}}}]}
+            service.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body=body).execute()
+            service.spreadsheets().values().append(
+                spreadsheetId=sheet_id,
+                range="leads!A:J",
+                valueInputOption="USER_ENTERED",
+                body={"values": [row]}
+            ).execute()
+            print(f"✅ Created leads sheet and saved: {full_name}")
+        
+        return True
+    except Exception as e:
+        print(f"❌ save_lead error: {e}")
+        return False
