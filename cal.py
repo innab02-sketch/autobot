@@ -28,52 +28,80 @@ def get_service():
 
 
 def parse_availability(text):
+    """Parse Hebrew availability string into (start_dt, end_dt).
+
+    Handles many formats Claude may produce, including:
+      - "רביעי 14:00"              (ideal / simple)
+      - "יום רביעי 14:00"          (with 'יום' prefix)
+      - "יום רביעי 07.05 ב-14:00"  (full format with date and ב-)
+      - "רביעי 07.05 14:00"        (day + date + time, no ב-)
+      - "רביעי ב-14:00"            (day + ב- prefix on time)
+
+    Strategy:
+      1. Find the Hebrew day name first.
+      2. Strip any date portion (dd.mm or dd/mm) so it can't be confused with time.
+      3. Strip the "ב-" prefix that sometimes appears before the hour.
+      4. Then look for the time in the cleaned string.
+    """
     text = text.strip()
+
+    # --- Step 1: find Hebrew day name ---
     found_day = None
     for heb, weekday_num in HEBREW_DAYS.items():
         if heb in text:
             found_day = weekday_num
             break
 
-    # Try multiple time formats: 10:00, 10.00, 1000, 10
-    time_match = re.search(r'(\d{1,2})[:\.](\d{2})', text)
+    if found_day is None:
+        print(f"parse_availability: no Hebrew day found in '{text}'")
+        return None
+
+    # --- Step 2: strip date portions like "07.05" or "07/05" ---
+    cleaned = re.sub(r'\b\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?\b', '', text)
+
+    # --- Step 3: strip "ב-" prefix before the time ---
+    cleaned = cleaned.replace('ב-', '').replace('ב–', '')
+
+    # --- Step 4: extract time from cleaned string ---
+    hour = None
+    minute = 0
+
+    # Try HH:MM or HH.MM
+    time_match = re.search(r'(\d{1,2})[:\.](\d{2})', cleaned)
     if time_match:
         hour = int(time_match.group(1))
         minute = int(time_match.group(2))
     else:
-        # Try 4-digit format like 1000 = 10:00, 1400 = 14:00
-        four_digit = re.search(r'\b(\d{4})\b', text)
+        # Try 4-digit format like 1400 = 14:00
+        four_digit = re.search(r'\b(\d{4})\b', cleaned)
         if four_digit:
             num = four_digit.group(1)
             hour = int(num[:2])
             minute = int(num[2:])
         else:
-            # Try standalone 1-2 digit number like "10" = 10:00
-            standalone = re.search(r'\b(\d{1,2})\b', text)
+            # Try standalone 1-2 digit number like "14" = 14:00
+            standalone = re.search(r'\b(\d{1,2})\b', cleaned)
             if standalone:
-                hour = int(standalone.group(1))
-                minute = 0
-                # Sanity check - must be a valid hour
-                if hour < 7 or hour > 21:
-                    hour = None
-            else:
-                hour = None
+                h = int(standalone.group(1))
+                if 7 <= h <= 21:
+                    hour = h
+                    minute = 0
 
-            if hour is None:
-                if "בוקר" in text:
-                    hour, minute = 10, 0
-                elif "צהריים" in text:
-                    hour, minute = 13, 0
-                elif "אחרי" in text:
-                    hour, minute = 15, 0
-                elif "ערב" in text:
-                    hour, minute = 18, 0
-                else:
-                    return None
+    # Fallback to time-of-day keywords
+    if hour is None:
+        if "בוקר" in text:
+            hour, minute = 10, 0
+        elif "צהריים" in text:
+            hour, minute = 13, 0
+        elif "אחרי" in text:
+            hour, minute = 15, 0
+        elif "ערב" in text:
+            hour, minute = 18, 0
+        else:
+            print(f"parse_availability: no time found in '{text}' (cleaned: '{cleaned}')")
+            return None
 
-    if found_day is None:
-        return None
-
+    # --- Step 5: compute the next occurrence of the target weekday ---
     today = datetime.now()
     days_ahead = found_day - today.weekday()
     if days_ahead <= 0:
@@ -83,6 +111,8 @@ def parse_availability(text):
         hour=hour, minute=minute, second=0, microsecond=0
     )
     end_dt = start_dt + timedelta(hours=1)
+
+    print(f"parse_availability: '{text}' -> {start_dt.strftime('%A %d.%m %H:%M')}")
     return start_dt, end_dt
 
 
