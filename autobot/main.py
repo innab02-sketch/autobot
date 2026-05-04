@@ -8,6 +8,9 @@ from whatsapp import send_message, send_message_by_contact
 
 app = Flask(__name__)
 
+from voice import voice_bp
+app.register_blueprint(voice_bp)
+
 VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN", "autobot_webhook_2026")
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
