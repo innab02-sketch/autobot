@@ -9,7 +9,8 @@ voice_bp = Blueprint("voice", __name__)
 _ai = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 HEBREW_WEEKDAYS = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
-VOICE = "Polly.Lior-Neural"
+# Use Google TTS voice for Hebrew - Polly doesn't support Hebrew well
+VOICE = "Google.he-IL-Wavenet-A"
 LANG = "he-IL"
 
 
@@ -30,10 +31,10 @@ def _system_prompt(caller_phone: str) -> str:
 
 ## זהות
 אתה נציג קולי של AUTOBOT — חברה שמתמחה באוטומציות עסקיות: WhatsApp, תהליכי מכירה, שירות לקוחות.
-אתה מדבר בטלפון — כתוב משפטים קצרים וברורים, ללא אימוג'ים, ללא תבליטים.
+אתה מדבר בטלפון — כתוב משפטים קצרים וברורים, ללא אימוג'ים, ללא תבליטים, ללא סימנים מיוחדים.
 
 ## שפה
-תמיד עברית בלבד.
+תמיד עברית בלבד. אל תשתמש באנגלית, אימוג'ים, כוכביות, או סימני פיסוק מיוחדים.
 
 ## תפקיד
 לנהל שיחה אנושית וזורמת, לאסוף מידע על הלקוח, ולקבוע פגישת ייעוץ עם אריק.
@@ -59,15 +60,32 @@ def _system_prompt(caller_phone: str) -> str:
 
 ## סיום שיחה
 אחרי שהלקוח אישר את כל הפרטים:
-"מצוין! קבענו פגישה עם אריק לסיום. אישור ישלח למייל שלך. תודה על הפנייה ושיהיה יום טוב!"
+"מצוין! קבענו פגישה עם אריק. אישור ישלח למייל שלך. תודה על הפנייה ושיהיה יום טוב!"
 
 ## שמירת נתונים — חובה לאחר אישור הלקוח
 הוסף שורה בפורמט הזה בסוף התגובה האחרונה — כלום אחריה:
 SAVE|[שם מלא]|[תחום עסק]|[גודל]|[אתגר]|[מה ניסו]|[זמינות שנבחרה]|{caller_phone}|[מייל]"""
 
 
+def _sanitize_text(text: str) -> str:
+    """Remove characters that Twilio Say verb can't handle."""
+    if not text:
+        return "שיהיה יום טוב"
+    # Remove emojis, asterisks, and other problematic characters
+    import re
+    # Remove emoji
+    text = re.sub(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251]+', '', text)
+    # Remove markdown-style formatting
+    text = text.replace('*', '').replace('_', '').replace('#', '')
+    # Remove any remaining non-printable chars except Hebrew, spaces, punctuation
+    text = re.sub(r'[^\u0590-\u05FF\u0020-\u007Ea-zA-Z0-9.,!?\-:;\n]', ' ', text)
+    text = text.strip()
+    return text if text else "שיהיה יום טוב"
+
+
 def _gather(text: str) -> VoiceResponse:
-    """מחזיר TwiML שמדבר ומחכה לתגובה."""
+    """Build TwiML that speaks and waits for response."""
+    text = _sanitize_text(text)
     resp = VoiceResponse()
     gather = Gather(
         input="speech",
@@ -75,12 +93,11 @@ def _gather(text: str) -> VoiceResponse:
         action="/voice/respond",
         method="POST",
         speech_timeout="auto",
-        speech_model="phone_call",
     )
-    gather.say(text, voice=VOICE, language=LANG)
+    gather.say(text, language=LANG)
     resp.append(gather)
-    # Fallback אם לא זוהה קול
-    resp.say("לא שמעתי. אם תרצה לחזור — התקשר שוב. שיהיה יום טוב!", voice=VOICE, language=LANG)
+    # Fallback if no speech detected
+    resp.say("לא שמעתי. אם תרצה לחזור, התקשר שוב. שיהיה יום טוב.", language=LANG)
     resp.hangup()
     return resp
 
@@ -90,7 +107,7 @@ def incoming_call():
     phone = request.form.get("From", "unknown")
     clear_history(f"voice_{phone}")
     return Response(
-        str(_gather("היי! אני הנציג הוירטואלי של AUTOBOT. במה אפשר לעזור?")),
+        str(_gather("היי, אני הנציג הוירטואלי של אוטובוט. במה אפשר לעזור?")),
         mimetype="text/xml",
     )
 
@@ -110,13 +127,18 @@ def voice_respond():
     history = get_history(session_key)
     history.append({"role": "user", "content": speech})
 
-    ai_response = _ai.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=512,
-        system=_system_prompt(phone),
-        messages=history,
-    )
-    reply = ai_response.content[0].text
+    try:
+        ai_response = _ai.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            system=_system_prompt(phone),
+            messages=history,
+        )
+        reply = ai_response.content[0].text
+    except Exception as e:
+        print(f"Voice AI error: {e}")
+        reply = "סליחה, יש תקלה טכנית. נסה להתקשר שוב בעוד כמה דקות."
+
     add_message(session_key, "user", speech)
     add_message(session_key, "assistant", reply)
 
@@ -132,7 +154,8 @@ def voice_respond():
 
     resp = VoiceResponse()
     if call_ended:
-        resp.say(visible_reply or "תודה על פנייתך. שיהיה יום טוב!", voice=VOICE, language=LANG)
+        final_text = _sanitize_text(visible_reply) if visible_reply else "תודה על פנייתך. שיהיה יום טוב."
+        resp.say(final_text, language=LANG)
         resp.hangup()
     else:
         resp = _gather(visible_reply)
@@ -155,16 +178,15 @@ def _process_save(phone: str, save_line: str):
         availability = parts[5].strip()
         client_email = parts[7].strip()
 
-        from cal import book_meeting, parse_availability
-        booked = book_meeting(full_name, phone, availability)
-
-        if booked and client_email and "@" in client_email:
-            result = parse_availability(availability)
-            if result:
-                start_dt, _ = result
+        from cal import parse_availability, create_event_simple
+        result = parse_availability(availability)
+        if result:
+            start_dt, end_dt = result
+            create_event_simple(full_name, phone, start_dt, end_dt, client_email)
+            if client_email and "@" in client_email:
                 day = HEBREW_WEEKDAYS[start_dt.weekday()]
                 meeting_time_str = f"יום {day} {start_dt.strftime('%d.%m')} בשעה {start_dt.strftime('%H:%M')}"
                 from email_sender import send_confirmation_email
-                send_confirmation_email(client_email, full_name, meeting_time_str)
+                send_confirmation_email(client_email, full_name, meeting_time_str, start_dt, end_dt)
     except Exception as e:
         print(f"Voice booking error: {e}")
