@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from flask import Blueprint, request, Response
 from twilio.twiml.voice_response import VoiceResponse, Gather
@@ -9,8 +10,6 @@ voice_bp = Blueprint("voice", __name__)
 _ai = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 HEBREW_WEEKDAYS = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
-# Use Google TTS voice for Hebrew - Polly doesn't support Hebrew well
-VOICE = "Google.he-IL-Wavenet-A"
 LANG = "he-IL"
 
 
@@ -71,20 +70,20 @@ def _sanitize_text(text: str) -> str:
     """Remove characters that Twilio Say verb can't handle."""
     if not text:
         return "שיהיה יום טוב"
-    # Remove emojis, asterisks, and other problematic characters
-    import re
     # Remove emoji
     text = re.sub(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251]+', '', text)
     # Remove markdown-style formatting
     text = text.replace('*', '').replace('_', '').replace('#', '')
-    # Remove any remaining non-printable chars except Hebrew, spaces, punctuation
+    # Keep only Hebrew, basic Latin, digits, and common punctuation
     text = re.sub(r'[^\u0590-\u05FF\u0020-\u007Ea-zA-Z0-9.,!?\-:;\n]', ' ', text)
+    # Collapse multiple spaces
+    text = re.sub(r' +', ' ', text)
     text = text.strip()
     return text if text else "שיהיה יום טוב"
 
 
 def _gather(text: str) -> VoiceResponse:
-    """Build TwiML that speaks and waits for response."""
+    """Build TwiML that speaks Hebrew and waits for response."""
     text = _sanitize_text(text)
     resp = VoiceResponse()
     gather = Gather(
@@ -94,10 +93,11 @@ def _gather(text: str) -> VoiceResponse:
         method="POST",
         speech_timeout="auto",
     )
+    # Use language only - let Twilio pick the default voice for he-IL
     gather.say(text, language=LANG)
     resp.append(gather)
     # Fallback if no speech detected
-    resp.say("לא שמעתי. אם תרצה לחזור, התקשר שוב. שיהיה יום טוב.", language=LANG)
+    resp.say(_sanitize_text("לא שמעתי. אם תרצה לחזור, התקשר שוב. שיהיה יום טוב."), language=LANG)
     resp.hangup()
     return resp
 
@@ -106,8 +106,9 @@ def _gather(text: str) -> VoiceResponse:
 def incoming_call():
     phone = request.form.get("From", "unknown")
     clear_history(f"voice_{phone}")
+    greeting = _sanitize_text("היי, אני הנציג הוירטואלי של אוטובוט. במה אפשר לעזור?")
     return Response(
-        str(_gather("היי, אני הנציג הוירטואלי של אוטובוט. במה אפשר לעזור?")),
+        str(_gather(greeting)),
         mimetype="text/xml",
     )
 
@@ -136,7 +137,7 @@ def voice_respond():
         )
         reply = ai_response.content[0].text
     except Exception as e:
-        print(f"Voice AI error: {e}")
+        print(f"[voice] AI error: {e}")
         reply = "סליחה, יש תקלה טכנית. נסה להתקשר שוב בעוד כמה דקות."
 
     add_message(session_key, "user", speech)
@@ -168,7 +169,7 @@ def _process_save(phone: str, save_line: str):
         from sheets import save_lead
         save_lead(save_line)
     except Exception as e:
-        print(f"Voice sheets error: {e}")
+        print(f"[voice] sheets error: {e}")
 
     try:
         parts = save_line.replace("SAVE|", "").split("|")
@@ -189,4 +190,4 @@ def _process_save(phone: str, save_line: str):
                 from email_sender import send_confirmation_email
                 send_confirmation_email(client_email, full_name, meeting_time_str, start_dt, end_dt)
     except Exception as e:
-        print(f"Voice booking error: {e}")
+        print(f"[voice] booking error: {e}")
