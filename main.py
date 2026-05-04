@@ -172,6 +172,27 @@ def test_email():
     return ("Email sent OK" if ok else "Email FAILED — check logs"), 200
 
 
+@app.route("/admin/test-booking", methods=["GET"])
+def test_booking():
+    token = request.args.get("token", "")
+    if token != VERIFY_TOKEN:
+        return "Forbidden", 403
+    availability = request.args.get("avail", "שלישי 10:00")
+    name = request.args.get("name", "Test User")
+    email = request.args.get("email", "")
+    try:
+        from cal import parse_availability, is_arik_available, book_meeting
+        result = parse_availability(availability)
+        if not result:
+            return f"parse_availability FAILED for: {availability}", 200
+        start_dt, end_dt = result
+        available = is_arik_available(start_dt, end_dt)
+        return f"Parsed: {start_dt} - {end_dt}\nArik available: {available}\nWould book: {name} at {start_dt}", 200
+    except Exception as e:
+        import traceback
+        return f"ERROR: {e}\n{traceback.format_exc()}", 200
+
+
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
     mode = request.args.get("hub.mode")
