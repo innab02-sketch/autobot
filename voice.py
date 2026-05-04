@@ -11,6 +11,9 @@ _ai = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 HEBREW_WEEKDAYS = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
 LANG = "he-IL"
+# Use Twilio's Google Neural voice for Hebrew — the basic he-IL TTS produces silence.
+# Google.he-IL-Wavenet-A is a female Neural voice (GA since March 2025).
+VOICE = "Google.he-IL-Wavenet-A"
 
 
 def _slots_text() -> str:
@@ -82,6 +85,11 @@ def _sanitize_text(text: str) -> str:
     return text if text else "שיהיה יום טוב"
 
 
+def _say(twiml_node, text: str) -> None:
+    """Append a <Say> with the Google Hebrew Neural voice to any TwiML node."""
+    twiml_node.say(text, voice=VOICE, language=LANG)
+
+
 def _gather(text: str) -> VoiceResponse:
     """Build TwiML that speaks Hebrew and waits for response."""
     text = _sanitize_text(text)
@@ -93,11 +101,12 @@ def _gather(text: str) -> VoiceResponse:
         method="POST",
         speech_timeout="auto",
     )
-    # Use language only - let Twilio pick the default voice for he-IL
-    gather.say(text, language=LANG)
+    # Use Google Neural voice — basic he-IL TTS produces silence on real calls.
+    gather.say(text, voice=VOICE, language=LANG)
     resp.append(gather)
     # Fallback if no speech detected
-    resp.say(_sanitize_text("לא שמעתי. אם תרצה לחזור, התקשר שוב. שיהיה יום טוב."), language=LANG)
+    fallback = _sanitize_text("לא שמעתי. אם תרצה לחזור, התקשר שוב. שיהיה יום טוב.")
+    resp.say(fallback, voice=VOICE, language=LANG)
     resp.hangup()
     return resp
 
@@ -156,7 +165,7 @@ def voice_respond():
     resp = VoiceResponse()
     if call_ended:
         final_text = _sanitize_text(visible_reply) if visible_reply else "תודה על פנייתך. שיהיה יום טוב."
-        resp.say(final_text, language=LANG)
+        resp.say(final_text, voice=VOICE, language=LANG)
         resp.hangup()
     else:
         resp = _gather(visible_reply)
