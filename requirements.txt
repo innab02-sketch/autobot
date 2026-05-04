@@ -1,8 +1,7 @@
-Flask
-anthropic
-twilio
-gspread
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-api-python-client
+flask==3.0.3
+anthropic==0.30.0
+requests==2.32.3
+gspread==6.1.2
+google-auth==2.30.0
+google-api-python-client==2.134.0
+twilio==9.0.0
