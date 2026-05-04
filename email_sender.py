@@ -7,11 +7,11 @@ from email import encoders
 from datetime import datetime, timedelta
 
 
-# Titan SMTP settings
-SMTP_SERVER = "smtp.titan.email"
+# Gmail SMTP settings
+SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 465
-SMTP_USER = "info@autobotil.com"
-SMTP_PASSWORD = os.getenv("TITAN_EMAIL_PASSWORD", "Autobot2026#")
+GMAIL_USER = os.getenv("GMAIL_USER", "autobotcrm26@gmail.com")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 
 def _build_ics(client_name: str, start_dt: datetime, end_dt: datetime) -> str:
@@ -29,7 +29,7 @@ BEGIN:VEVENT
 DTSTART:{utc_start}
 DTEND:{utc_end}
 DTSTAMP:{now_utc}
-ORGANIZER;CN=AUTOBOT:mailto:info@autobotil.com
+ORGANIZER;CN=AUTOBOT:mailto:{GMAIL_USER}
 SUMMARY:שיחת ייעוץ עם אריק - AUTOBOT
 DESCRIPTION:שיחת ייעוץ בנושא אוטומציות עסקיות עם אריק מ-AUTOBOT
 LOCATION:שיחת טלפון / זום
@@ -61,7 +61,7 @@ def _build_html(client_name: str, meeting_time: str) -> str:
                     <!-- Body -->
                     <tr>
                         <td style="padding:40px 30px;">
-                            <h2 style="color:#1a1a2e; margin:0 0 20px; font-size:22px;">הפגישה שלך אושרה! ✓</h2>
+                            <h2 style="color:#1a1a2e; margin:0 0 20px; font-size:22px;">הפגישה שלך אושרה!</h2>
                             <p style="color:#333; font-size:16px; line-height:1.6; margin:0 0 15px;">
                                 שלום {client_name},
                             </p>
@@ -73,9 +73,9 @@ def _build_html(client_name: str, meeting_time: str) -> str:
                                 <tr>
                                     <td style="padding:20px 25px;">
                                         <p style="color:#666; font-size:13px; margin:0 0 8px; text-transform:uppercase; letter-spacing:1px;">פרטי הפגישה</p>
-                                        <p style="color:#1a1a2e; font-size:18px; font-weight:bold; margin:0 0 8px;">📅 {meeting_time}</p>
-                                        <p style="color:#555; font-size:14px; margin:0;">👤 עם: אריק, מייסד AUTOBOT</p>
-                                        <p style="color:#555; font-size:14px; margin:5px 0 0;">📍 שיחת טלפון / זום</p>
+                                        <p style="color:#1a1a2e; font-size:18px; font-weight:bold; margin:0 0 8px;">{meeting_time}</p>
+                                        <p style="color:#555; font-size:14px; margin:0;">עם: אריק, מייסד AUTOBOT</p>
+                                        <p style="color:#555; font-size:14px; margin:5px 0 0;">שיחת טלפון / זום</p>
                                     </td>
                                 </tr>
                             </table>
@@ -114,18 +114,21 @@ def send_confirmation_email(to_email: str, client_name: str, meeting_time: str, 
         start_dt: datetime object for meeting start (optional, used for ICS)
         end_dt: datetime object for meeting end (optional, used for ICS)
     """
+    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+        print("[email_sender] ERROR: GMAIL_USER or GMAIL_APP_PASSWORD not configured")
+        return False
+
     try:
         msg = MIMEMultipart("mixed")
         msg["Subject"] = f"אישור פגישה - {meeting_time} | AUTOBOT"
-        msg["From"] = f"AUTOBOT <{SMTP_USER}>"
+        msg["From"] = f"AUTOBOT <{GMAIL_USER}>"
         msg["To"] = to_email
-        msg["Reply-To"] = SMTP_USER
+        msg["Reply-To"] = GMAIL_USER
 
         # HTML body
         html_content = _build_html(client_name, meeting_time)
-        html_part = MIMEText(html_content, "html", "utf-8")
-        
-        # Also add plain text fallback
+
+        # Plain text fallback
         plain_text = f"""שלום {client_name},
 
 הפגישה שלך עם אריק מ-AUTOBOT אושרה!
@@ -143,7 +146,7 @@ autobotil.com"""
         # Create alternative part for HTML + plain text
         alt_part = MIMEMultipart("alternative")
         alt_part.attach(MIMEText(plain_text, "plain", "utf-8"))
-        alt_part.attach(html_part)
+        alt_part.attach(MIMEText(html_content, "html", "utf-8"))
         msg.attach(alt_part)
 
         # Attach ICS file if dates provided
@@ -155,12 +158,12 @@ autobotil.com"""
             ics_part.add_header("Content-Disposition", "attachment", filename="meeting.ics")
             msg.attach(ics_part)
 
-        # Send via Titan SMTP
+        # Send via Gmail SMTP
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_USER, to_email, msg.as_string())
+            server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+            server.sendmail(GMAIL_USER, to_email, msg.as_string())
 
-        print(f"[email_sender] Professional email sent to {to_email} from {SMTP_USER}")
+        print(f"[email_sender] Professional email sent to {to_email} from {GMAIL_USER}")
         return True
 
     except Exception as e:
