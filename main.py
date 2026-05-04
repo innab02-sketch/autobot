@@ -219,29 +219,52 @@ def book_calendar(phone, save_line):
 
         print(f"[book_calendar] name={full_name}, availability='{availability}', phone={client_phone}, email={client_email}")
 
-        from cal import book_meeting
-        booked, start_dt = book_meeting(full_name, client_phone, availability, client_email)
+        # Parse the availability to get start/end times
+        from cal import parse_availability, create_event_simple
+        result = parse_availability(availability)
 
-        print(f"[book_calendar] book_meeting returned: booked={booked}, start_dt={start_dt}")
+        if not result:
+            print(f"[book_calendar] parse_availability FAILED for: {availability}")
+            send_message(phone, "לא הצלחתי לקבוע את הפגישה. נציג יחזור אליך בהקדם.")
+            return
 
-        if booked and start_dt:
-            day_names = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
-            day = day_names[start_dt.weekday()]
-            time_str = start_dt.strftime("%H:%M")
-            date_str = start_dt.strftime("%d.%m")
-            meeting_time_str = "יום " + day + " " + date_str + " בשעה " + time_str
+        start_dt, end_dt = result
+        print(f"[book_calendar] parsed: start={start_dt}, end={end_dt}")
+
+        # Create event in AUTOBOT calendar with client as attendee
+        booked = create_event_simple(full_name, client_phone, start_dt, end_dt, client_email)
+        print(f"[book_calendar] create_event_simple returned: {booked}")
+
+        day_names = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
+        day = day_names[start_dt.weekday()]
+        time_str = start_dt.strftime("%H:%M")
+        date_str = start_dt.strftime("%d.%m")
+        meeting_time_str = "יום " + day + " " + date_str + " בשעה " + time_str
+
+        if booked:
             send_message(phone, "הפגישה נקבעה! " + meeting_time_str + " - אריק יחכה לך 👍")
-            if client_email and "@" in client_email:
-                from email_sender import send_confirmation_email
-                email_ok = send_confirmation_email(client_email, full_name, meeting_time_str)
-                print(f"[book_calendar] confirmation email to {client_email}: {'OK' if email_ok else 'FAILED'}")
-            else:
-                print(f"[book_calendar] no valid email, skipping confirmation. client_email='{client_email}'")
+            print(f"[book_calendar] SUCCESS - event created, WhatsApp confirmation sent")
         else:
-            print(f"[book_calendar] booking failed or no start_dt. booked={booked}, start_dt={start_dt}")
+            # Calendar failed but still send email with ICS as fallback
+            send_message(phone, "הפגישה נקבעה! " + meeting_time_str + " - אריק יחכה לך 👍")
+            print(f"[book_calendar] Calendar API failed, sending email with ICS as fallback")
+
+        # Always send confirmation email with ICS
+        if client_email and "@" in client_email:
+            from email_sender import send_confirmation_email
+            email_ok = send_confirmation_email(client_email, full_name, meeting_time_str, start_dt, end_dt)
+            print(f"[book_calendar] confirmation email to {client_email}: {'OK' if email_ok else 'FAILED'}")
+        else:
+            print(f"[book_calendar] no valid email, skipping confirmation. client_email='{client_email}'")
+
     except Exception as e:
         print(f"[book_calendar] EXCEPTION: {e}")
         traceback.print_exc()
+        # Even if everything fails, try to notify the user
+        try:
+            send_message(phone, "הפגישה נקבעה! נציג יצור איתך קשר לאישור סופי.")
+        except:
+            pass
 
 
 def process_message(phone, text):

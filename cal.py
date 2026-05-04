@@ -250,3 +250,48 @@ def book_meeting(full_name, phone, availability_str, client_email=""):
     else:
         print("Arik is busy at " + str(start_dt))
         return False, None
+
+
+def create_event_simple(full_name, phone, start_dt, end_dt, client_email=""):
+    """Create a calendar event in AUTOBOT calendar without checking Arik's availability.
+    Adds client as attendee so they get a calendar invite automatically from Google."""
+    try:
+        service = get_service()
+        attendees = []
+        if client_email and "@" in client_email:
+            attendees.append({"email": client_email})
+
+        event = {
+            "summary": "שיחת ייעוץ - " + full_name,
+            "description": "טלפון: " + phone + "\nנקבע אוטומטית על ידי AUTOBOT",
+            "start": {"dateTime": start_dt.isoformat(), "timeZone": "Asia/Jerusalem"},
+            "end": {"dateTime": end_dt.isoformat(), "timeZone": "Asia/Jerusalem"},
+            "attendees": attendees,
+            "reminders": {
+                "useDefault": False,
+                "overrides": [
+                    {"method": "email", "minutes": 60},
+                    {"method": "popup", "minutes": 15}
+                ]
+            }
+        }
+
+        created = service.events().insert(
+            calendarId=AUTOBOT_CALENDAR_ID,
+            body=event,
+            sendUpdates="all"
+        ).execute()
+
+        print(f"[create_event_simple] Event created: {created.get('id')} for {full_name} at {start_dt}")
+
+        # Also save reminder to sheets
+        try:
+            from sheets import save_reminder
+            save_reminder(phone, start_dt)
+        except Exception as e:
+            print(f"[create_event_simple] save_reminder failed: {e}")
+
+        return True
+    except Exception as e:
+        print(f"[create_event_simple] ERROR: {e}")
+        return False
