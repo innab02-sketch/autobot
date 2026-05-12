@@ -7,6 +7,7 @@ from googleapiclient.discovery import build
 
 AUTOBOT_CALENDAR_ID = os.getenv("AUTOBOT_CALENDAR_ID")
 ARIK_CALENDAR_ID = os.getenv("ARIK_CALENDAR_ID")
+AUTOBOT_EMAIL = os.getenv("GMAIL_USER")  # autobotcrm26@gmail.com — לחסימת זמן ביומן
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
@@ -145,6 +146,8 @@ def create_event(full_name, phone, start_dt, end_dt, client_email=""):
     try:
         service = get_service()
         attendees = []
+        if AUTOBOT_EMAIL and "@" in AUTOBOT_EMAIL:
+            attendees.append({"email": AUTOBOT_EMAIL, "responseStatus": "accepted"})
         if ARIK_CALENDAR_ID and "@" in ARIK_CALENDAR_ID:
             attendees.append({"email": ARIK_CALENDAR_ID})
         if client_email and "@" in client_email:
@@ -258,6 +261,8 @@ def create_event_simple(full_name, phone, start_dt, end_dt, client_email=""):
     try:
         service = get_service()
         attendees = []
+        if AUTOBOT_EMAIL and "@" in AUTOBOT_EMAIL:
+            attendees.append({"email": AUTOBOT_EMAIL, "responseStatus": "accepted"})
         if client_email and "@" in client_email:
             attendees.append({"email": client_email})
 
