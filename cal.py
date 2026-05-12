@@ -166,7 +166,7 @@ def create_event(full_name, phone, start_dt, end_dt, client_email=""):
         service.events().insert(
             calendarId=AUTOBOT_CALENDAR_ID,
             body=event,
-            sendUpdates="all"
+            sendUpdates="none"
         ).execute()
         print("Meeting created: " + full_name + " at " + str(start_dt))
         return True
@@ -279,7 +279,7 @@ def create_event_simple(full_name, phone, start_dt, end_dt, client_email=""):
         created = service.events().insert(
             calendarId=AUTOBOT_CALENDAR_ID,
             body=event,
-            sendUpdates="all"
+            sendUpdates="none"
         ).execute()
 
         print(f"[create_event_simple] Event created: {created.get('id')} for {full_name} at {start_dt}")
