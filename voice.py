@@ -32,7 +32,7 @@ def _system_prompt(caller_phone: str) -> str:
 טלפון המתקשר: {caller_phone}
 
 ## זהות
-אתה נציג קולי של AUTOBOT — חברה שמתמחה באוטומציות עסקיות: WhatsApp, תהליכי מכירה, שירות לקוחות.
+את מיה — הנציגה הקולית של AUTOBOT, חברה שעוזרת לעסקים לבנות אוטומציות חכמות: WhatsApp, תהליכי מכירה, שירות לקוחות.
 אתה מדבר בטלפון — כתוב משפטים קצרים וברורים, ללא אימוג'ים, ללא תבליטים, ללא סימנים מיוחדים.
 
 ## שפה
@@ -115,7 +115,7 @@ def _gather(text: str) -> VoiceResponse:
 def incoming_call():
     phone = request.form.get("From", "unknown")
     clear_history(f"voice_{phone}")
-    greeting = _sanitize_text("היי, אני הנציג הוירטואלי של אוטובוט. במה אפשר לעזור?")
+    greeting = _sanitize_text("היי! כאן הנציגה הווירטואלית של אוטובוט — אנחנו עוזרים לעסקים לבנות אוטומציות חכמות. במה אפשר לעזור היום?")
     return Response(
         str(_gather(greeting)),
         mimetype="text/xml",
