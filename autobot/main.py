@@ -1,13 +1,16 @@
 import os
 import json
 import anthropic
-from datetime import datetime
+import threading
+import time
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from conversation import get_history, add_message, clear_history
-from whatsapp import send_message, send_message_by_contact
+from whatsapp import send_message
 
 app = Flask(__name__)
 
+# Register voice Blueprint
 from voice import voice_bp
 app.register_blueprint(voice_bp)
 
@@ -15,6 +18,16 @@ VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN", "autobot_webhook_2026")
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 HEBREW_WEEKDAYS = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
+
+# Per-phone lock to prevent concurrent message processing
+_phone_locks = {}
+_locks_lock = threading.Lock()
+
+def _get_phone_lock(phone):
+    with _locks_lock:
+        if phone not in _phone_locks:
+            _phone_locks[phone] = threading.Lock()
+        return _phone_locks[phone]
 
 
 def get_system_prompt():
@@ -26,12 +39,13 @@ def get_system_prompt():
         from cal import get_available_slots, format_slots_for_prompt
         slots = get_available_slots()
         slots_text = format_slots_for_prompt(slots)
-    except Exception:
+    except Exception as e:
+        print("Failed to get calendar slots: " + str(e))
         slots_text = "אין מידע על זמינות כרגע"
 
-    return """תאריך היום: """ + date_str + """, יום """ + day_name + """
+    return "תאריך היום: " + date_str + ", יום " + day_name + """
 
-## ⛔ אסורים מוחלטים — עבירה על אחד מהם היא שגיאה קריטית:
+## ⛔️ אסורים מוחלטים — עבירה על אחד מהם היא שגיאה קריטית:
 1. אסור לשנות את ניסוח העסק של הלקוח — לא לתרגם, לא לפרש, לא לסכם. "חנות אוזניות אונליין" = "חנות אוזניות אונליין". לא "מסחר אלקטרוני", לא שום דבר אחר.
 2. אסור לטעון ששלחת מייל, הודעה, אישור, או כל דבר אחר שלא נשלח בפועל — רק לאחר קבלת המייל ורישום SAVE המערכת שולחת אישור אוטומטית.
 3. בסיום השיחה — חייב לציין את היום והשעה המדויקים שסוכמו. אסור לכתוב "בשעות הפעילות" או כל ניסוח מעורפל אחר.
@@ -65,24 +79,23 @@ def get_system_prompt():
 
 ## שאלת זמינות — חובה לפי הסדר:
 1. שאל "מתי נוח לך? בוקר/צהריים/ערב?"
-2. לאחר שהלקוח ענה — הצע 2-3 אפשרויות פנויות **מהרשימה למעלה בלבד** שמתאימות למה שאמר
+2. לאחר שהלקוח ענה — הצע 2-3 אפשרויות פנויות מהרשימה למעלה בלבד שמתאימות למה שאמר
    דוגמה: "מעולה! יש לי פנוי ביום שלישי 29.04 ב-10:00 או ביום רביעי 30.04 ב-14:00 — מה מתאים?"
 3. לאחר שהלקוח בחר שעה מהרשימה — אשר את הבחירה ועבור לשאלה הבאה
-4. **אם הלקוח מציע מועד שאינו ברשימה — חובה לענות: "אבדוק עם אריק ואחזור אליך בהקדם" — אסור לאשר מועד שלא ברשימה**
+4. אם הלקוח מציע מועד שאינו ברשימה — הצע את 2-3 האפשרויות הקרובות ביותר מהרשימה. אסור לאשר מועד שלא ברשימה.
 
 ## כללי ברזל — חובה לקיים:
 - שאלה אחת בלבד בכל הודעה
-- **אסור לשאול על מידע שכבר ניתן** — לפני כל שאלה בדוק את היסטוריית השיחה
+- אסור לשאול על מידע שכבר ניתן — לפני כל שאלה בדוק את היסטוריית השיחה
 - תגובה אמפתית קצרה לפני שאלה הבאה
 - טון ישיר וחברי - לא פורמלי
 - אל תציע פתרונות טכניים
 - מקסימום 1-2 אימוגי'ים למסר
-- **אסור לטעון ששלחת מייל, הודעה, או כל דבר אחר שלא שלחת בפועל**
 
 ## שלב הסיכום:
-לאחר שאספת את כל המידע הנדרש, **חובה** לסכם ולבקש אישור לפני שממשיכים לתיאום.
+לאחר שאספת את כל המידע הנדרש, חובה לסכם ולבקש אישור לפני שממשיכים לתיאום.
 
-**חוק ברזל לסיכום: העתק בדיוק את המילים שהלקוח אמר — אל תפרש, אל תשנה, אל תתרגם, אל תמציא.**
+חוק ברזל לסיכום: העתק בדיוק את המילים שהלקוח אמר — אל תפרש, אל תשנה, אל תתרגם, אל תמציא.
 לדוגמה: אם הלקוח אמר "חנות אוזניות אונליין" — כתוב "חנות אוזניות אונליין" ולא "מסחר אלקטרוני" או כל ניסוח אחר.
 
 פורמט הסיכום:
@@ -100,16 +113,62 @@ def get_system_prompt():
 ## סיום שיחה — חובה:
 השתמש בדיוק ביום ובשעה שסוכמו בשיחה:
 "מעולה [שם]! קבענו את הפגישה עם אריק ל[יום ותאריך מדויקים שסוכמו] בשעה [שעה מדויקת שסוכמה]. בינתיים אם עולות שאלות - אני פה 👍"
-**אסור לכתוב "בשעות הפעילות" — תמיד ציין את השעה המדויקת שהלקוח בחר.**
+אסור לכתוב "בשעות הפעילות" — תמיד ציין את השעה המדויקת שהלקוח בחר.
 
 ## שמירת נתונים - חובה:
 לאחר שהלקוח אישר את הסיכום, ההודעה האחרונה שלך חייבת להסתיים בשורה:
 SAVE|[full_name]|[business_type]|[business_size]|[main_challenge]|[previous_attempts]|[availability]|[phone]|[email]
 
-השתמש בדיוק במה שהלקוח אמר — אל תשנה, אל תתרגם, אל תסכם אחרת.
-
-לדוגמה:
+השתמש בדיוק במה שהלקוח אמר — אל תשנה, אל תתרגם, אל תסכם אחרת.לדוגמה:
 SAVE|ישראל ישראלי|נדלן|קטן|אין מספיק לידים|פרסום בפייסבוק|רביעי 14:00|0521234567|israel@gmail.com"""
+
+
+def check_reminders():
+    while True:
+        try:
+            from sheets import get_pending_reminders, mark_reminder_sent
+            now = datetime.now()
+            reminders = get_pending_reminders()
+            for row_num, reminder in reminders:
+                meeting_time = datetime.strptime(reminder["meeting_time"], "%Y-%m-%d %H:%M")
+                minutes_left = (meeting_time - now).total_seconds() / 60
+                if 19 <= minutes_left <= 21:
+                    phone = str(reminder["phone"])
+                    send_message(phone, "היי! רק מזכיר/ת שיש לך שיחה עם אריק בעוד 20 דקות. מחכים לך!")
+                    mark_reminder_sent(row_num)
+        except Exception as e:
+            print("Reminder check error: " + str(e))
+        time.sleep(60)
+
+
+reminder_thread = threading.Thread(target=check_reminders, daemon=True)
+reminder_thread.start()
+
+
+@app.route("/admin/clear/<phone>", methods=["GET"])
+def admin_clear(phone):
+    token = request.args.get("token", "")
+    if token != VERIFY_TOKEN:
+        return "Forbidden", 403
+    clear_history(phone)
+    return "History cleared for " + phone, 200
+
+
+@app.route("/admin/test-email", methods=["GET"])
+def test_email():
+    token = request.args.get("token", "")
+    if token != VERIFY_TOKEN:
+        return "Forbidden", 403
+    to = request.args.get("to", "")
+    if not to:
+        return "Missing ?to=email", 400
+    gmail_user = os.getenv("GMAIL_USER", "")
+    gmail_pass = os.getenv("GMAIL_APP_PASSWORD", "")
+    if not gmail_user or not gmail_pass:
+        return f"Missing env vars: GMAIL_USER={'set' if gmail_user else 'MISSING'}, GMAIL_APP_PASSWORD={'set' if gmail_pass else 'MISSING'}", 200
+    from email_sender import send_confirmation_email
+    ok = send_confirmation_email(to, "בדיקה", "יום שלישי 29.04 בשעה 10:00")
+    return ("Email sent OK" if ok else "Email FAILED — check logs"), 200
 
 
 @app.route("/webhook", methods=["GET"])
@@ -122,24 +181,46 @@ def verify_webhook():
     return "Forbidden", 403
 
 
-@app.route("/webhook", methods=["POST"])
-def handle_webhook():
-    data = request.get_json()
+def book_calendar(phone, save_line):
     try:
-        entry = data["entry"][0]
-        changes = entry["changes"][0]
-        value = changes["value"]
+        parts = save_line.replace("SAVE|", "").split("|")
+        if len(parts) < 7:
+            return
+        full_name = parts[0].strip()
+        availability = parts[5].strip()
+        client_phone = parts[6].strip()
+        client_email = parts[7].strip() if len(parts) > 7 else ""
+        from cal import book_meeting
+        booked, start_dt = book_meeting(full_name, client_phone, availability, client_email)
+        if booked and start_dt:
+            day_names = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
+            day = day_names[start_dt.weekday()]
+            time_str = start_dt.strftime("%H:%M")
+            date_str = start_dt.strftime("%d.%m")
+            meeting_time_str = "יום " + day + " " + date_str + " בשעה " + time_str
+            send_message(phone, "הפגישה נקבעה! " + meeting_time_str + " - אריק יחכה לך 👍")
+            if client_email and "@" in client_email:
+                from email_sender import send_confirmation_email
+                send_confirmation_email(client_email, full_name, meeting_time_str)
+    except Exception as e:
+        print("Calendar booking error: " + str(e))
 
-        if "messages" not in value:
-            return jsonify({"status": "ok"}), 200
 
-        message = value["messages"][0]
-        phone = message["from"]
-        text = message.get("text", {}).get("body", "")
+def process_message(phone, text):
+    """
+    Core message processing logic shared by both /webhook and /sendpulse routes.
+    Takes a phone number and message text, processes through Claude AI,
+    handles SAVE| lines for lead saving and calendar booking, and sends reply.
+    """
+    if not text:
+        return
 
-        if not text:
-            return jsonify({"status": "ok"}), 200
+    lock = _get_phone_lock(phone)
+    if not lock.acquire(timeout=30):
+        print(f"Skipping message from {phone} - still processing previous message")
+        return
 
+    try:
         history = get_history(phone)
         history.append({"role": "user", "content": text})
 
@@ -165,128 +246,154 @@ def handle_webhook():
                 send_message(phone, visible_reply)
         else:
             send_message(phone, reply)
+    finally:
+        lock.release()
+
+
+@app.route("/webhook", methods=["POST"])
+def handle_webhook():
+    data = request.get_json()
+    try:
+        entry = data["entry"][0]
+        changes = entry["changes"][0]
+        value = changes["value"]
+
+        if "messages" not in value:
+            return jsonify({"status": "ok"}), 200
+
+        message = value["messages"][0]
+        phone = message["from"]
+        text = message.get("text", {}).get("body", "")
+
+        process_message(phone, text)
 
     except Exception as e:
-        print(f"Error: {e}")
+        print("Webhook error: " + str(e))
 
     return jsonify({"status": "ok"}), 200
 
+
+# ---------------------------------------------------------------------------
+# SendPulse webhook endpoint
+# ---------------------------------------------------------------------------
+# SendPulse sends incoming-message webhooks as a JSON **array** of event
+# objects.  Each object has the structure documented at
+# https://sendpulse.com/integrations/api/chatbot/webhooks
+#
+# Phone number extraction priority:
+#   1. contact.phone          (top-level field present in some payloads)
+#   2. contact.variables.Phone / contact.variables.phone
+#   3. info.message.channel_data.message.from  (WhatsApp sender ID)
+#
+# Message text extraction priority:
+#   1. info.message.channel_data.message.text.body
+#   2. contact.last_message
+# ---------------------------------------------------------------------------
+
+@app.route("/twilio", methods=["POST"])
+def handle_twilio():
+    try:
+        # Twilio sends data as form-urlencoded
+        from_number = request.form.get("From", "")
+        body = request.form.get("Body", "")
+        
+        if not from_number or not body:
+            return "Missing From or Body", 400
+            
+        # Extract phone number (strip "whatsapp:+" prefix)
+        if from_number.startswith("whatsapp:+"):
+            phone = from_number[10:]
+        elif from_number.startswith("whatsapp:"):
+            phone = from_number[9:]
+        elif from_number.startswith("+"):
+            phone = from_number[1:]
+        else:
+            phone = from_number
+            
+        print(f"Twilio incoming: phone={phone}, text={body[:80]}")
+        process_message(phone, body)
+        
+        # Return empty TwiML response
+        return "<Response></Response>", 200, {'Content-Type': 'text/xml'}
+        
+    except Exception as e:
+        print("Twilio webhook error: " + str(e))
+        import traceback
+        traceback.print_exc()
+        return "Error", 500
 
 @app.route("/sendpulse", methods=["POST"])
 def handle_sendpulse():
-    data = request.get_json()
-    try:
-        # SendPulse sends an array
-        if isinstance(data, list):
-            data = data[0]
+    raw = request.get_json(force=True, silent=True)
+    if raw is None:
+        print("SendPulse: empty or invalid JSON body")
+        return jsonify({"status": "ok"}), 200
 
-        title = data.get("title", "")
-        if title != "incoming_message":
-            return jsonify({"status": "ok"}), 200
+    # SendPulse may send a single object or an array of objects
+    events = raw if isinstance(raw, list) else [raw]
 
-        contact = data.get("contact", {})
-        contact_id = contact.get("id", "")
-        phone = contact.get("phone", "") or contact.get("variables", {}).get("Phone", "")
-        text = contact.get("last_message", "")
+    for event in events:
+        try:
+            title = event.get("title", "")
+            service = event.get("service", "")
 
-        session_key = contact_id or phone
-        if not session_key or not text:
-            return jsonify({"status": "ok"}), 200
+            # Only process incoming WhatsApp messages
+            if title != "incoming_message":
+                print(f"SendPulse: skipping event title={title}")
+                continue
 
-        history = get_history(session_key)
-        history.append({"role": "user", "content": text})
+            # --- Extract phone number ---
+            contact = event.get("contact", {})
+            phone = contact.get("phone") or contact.get("Phone")
 
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            system=get_system_prompt(),
-            messages=history
-        )
+            if not phone:
+                variables = contact.get("variables", {})
+                phone = variables.get("Phone") or variables.get("phone")
 
-        reply = response.content[0].text
-        add_message(session_key, "user", text)
-        add_message(session_key, "assistant", reply)
+            if not phone:
+                # Fallback: use the "from" field in channel_data (WhatsApp sender)
+                try:
+                    from_id = event["info"]["message"]["channel_data"]["message"]["from"]
+                    phone = str(from_id)
+                except (KeyError, TypeError):
+                    pass
 
-        def reply_to_user(msg):
-            if contact_id:
-                send_message_by_contact(contact_id, msg)
-            else:
-                send_message(phone, msg)
+            if not phone:
+                print("SendPulse: could not extract phone number")
+                print("SendPulse: full event: " + json.dumps(event, ensure_ascii=False, default=str)[:2000])
+                continue
 
-        if "SAVE|" in reply:
-            save_lines = [line for line in reply.split("\n") if line.startswith("SAVE|")]
-            if save_lines:
-                save_line = save_lines[0]
-                from sheets import save_lead
-                save_lead(save_line)
-                book_calendar(session_key, save_line)
-                visible_reply = reply.replace(save_line, "").strip()
-                reply_to_user(visible_reply)
-        else:
-            reply_to_user(reply)
+            # Normalize phone: ensure it's a string, strip whitespace
+            phone = str(phone).strip()
 
-    except Exception as e:
-        print(f"SendPulse webhook error: {e}")
+            # --- Extract message text ---
+            text = ""
+            try:
+                text = event["info"]["message"]["channel_data"]["message"]["text"]["body"]
+            except (KeyError, TypeError):
+                pass
+
+            if not text:
+                text = contact.get("last_message", "")
+
+            if not text:
+                print(f"SendPulse: empty message from {phone}, skipping")
+                continue
+
+            print(f"SendPulse incoming: phone={phone}, text={text[:80]}")
+            process_message(phone, text)
+
+        except Exception as e:
+            print("SendPulse event error: " + str(e))
+            import traceback
+            traceback.print_exc()
 
     return jsonify({"status": "ok"}), 200
 
 
-@app.route("/admin/clear/<phone>", methods=["GET"])
-def admin_clear(phone):
-    token = request.args.get("token", "")
-    if token != VERIFY_TOKEN:
-        return "Forbidden", 403
-    clear_history(phone)
-    return f"History cleared for {phone}", 200
-
-
-@app.route("/admin/test-email", methods=["GET"])
-def test_email():
-    token = request.args.get("token", "")
-    if token != VERIFY_TOKEN:
-        return "Forbidden", 403
-    to = request.args.get("to", "")
-    if not to:
-        return "Missing ?to=email", 400
-    from email_sender import send_confirmation_email
-    ok = send_confirmation_email(to, "בדיקה", "יום שלישי 29.04 בשעה 10:00")
-    return ("Email sent OK" if ok else "Email FAILED — check logs"), 200
-
-
-def book_calendar(phone, save_line):
-    try:
-        parts = save_line.replace("SAVE|", "").split("|")
-        if len(parts) < 7:
-            return
-        full_name = parts[0].strip()
-        availability = parts[5].strip()
-        client_phone = parts[6].strip()
-        client_email = parts[7].strip() if len(parts) > 7 else ""
-        from cal import book_meeting, parse_availability, get_available_slots, format_slots_for_prompt
-        booked = book_meeting(full_name, client_phone, availability)
-        if booked:
-            result = parse_availability(availability)
-            if result:
-                start_dt, _ = result
-                day_names = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
-                day = day_names[start_dt.weekday()]
-                time_str = start_dt.strftime("%H:%M")
-                date_str = start_dt.strftime("%d.%m")
-                meeting_time_str = f"יום {day} {date_str} בשעה {time_str}"
-                send_message(phone, "הפגישה נקבעה! " + meeting_time_str + " - אריק יחכה לך 👍")
-                if client_email and "@" in client_email:
-                    from email_sender import send_confirmation_email
-                    send_confirmation_email(client_email, full_name, meeting_time_str)
-        else:
-            # השעה תפוסה — מציעים חלופות
-            slots = get_available_slots()
-            if slots:
-                slots_text = format_slots_for_prompt(slots[:3])
-                send_message(phone, "לצערי השעה הזו כבר נתפסה 😕\nהינה אפשרויות פנויות קרובות:\n" + slots_text + "\nאיזו מתאימה לך?")
-            else:
-                send_message(phone, "לצערי השעה הזו כבר נתפסה 😕 אריק ייצור איתך קשר לתיאום מועד חלופי.")
-    except Exception as e:
-        print(f"Calendar booking error: {e}")
+@app.route("/", methods=["GET"])
+def health():
+    return "AUTOBOT is running", 200
 
 
 if __name__ == "__main__":

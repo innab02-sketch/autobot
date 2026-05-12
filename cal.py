@@ -27,33 +27,81 @@ def get_service():
     return build("calendar", "v3", credentials=creds)
 
 
-def parse_availability(text: str):
+def parse_availability(text):
+    """Parse Hebrew availability string into (start_dt, end_dt).
+
+    Handles many formats Claude may produce, including:
+      - "רביעי 14:00"              (ideal / simple)
+      - "יום רביעי 14:00"          (with 'יום' prefix)
+      - "יום רביעי 07.05 ב-14:00"  (full format with date and ב-)
+      - "רביעי 07.05 14:00"        (day + date + time, no ב-)
+      - "רביעי ב-14:00"            (day + ב- prefix on time)
+
+    Strategy:
+      1. Find the Hebrew day name first.
+      2. Strip any date portion (dd.mm or dd/mm) so it can't be confused with time.
+      3. Strip the "ב-" prefix that sometimes appears before the hour.
+      4. Then look for the time in the cleaned string.
+    """
     text = text.strip()
+
+    # --- Step 1: find Hebrew day name ---
     found_day = None
     for heb, weekday_num in HEBREW_DAYS.items():
         if heb in text:
             found_day = weekday_num
             break
 
-    time_match = re.search(r'(\d{1,2})[:\.](\d{2})', text)
-    if not time_match:
+    if found_day is None:
+        print(f"parse_availability: no Hebrew day found in '{text}'")
+        return None
+
+    # --- Step 2: strip date portions like "07.05" or "07/05" ---
+    cleaned = re.sub(r'\b\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?\b', '', text)
+
+    # --- Step 3: strip "ב-" prefix before the time ---
+    cleaned = cleaned.replace('ב-', '').replace('ב–', '')
+
+    # --- Step 4: extract time from cleaned string ---
+    hour = None
+    minute = 0
+
+    # Try HH:MM or HH.MM
+    time_match = re.search(r'(\d{1,2})[:\.](\d{2})', cleaned)
+    if time_match:
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2))
+    else:
+        # Try 4-digit format like 1400 = 14:00
+        four_digit = re.search(r'\b(\d{4})\b', cleaned)
+        if four_digit:
+            num = four_digit.group(1)
+            hour = int(num[:2])
+            minute = int(num[2:])
+        else:
+            # Try standalone 1-2 digit number like "14" = 14:00
+            standalone = re.search(r'\b(\d{1,2})\b', cleaned)
+            if standalone:
+                h = int(standalone.group(1))
+                if 7 <= h <= 21:
+                    hour = h
+                    minute = 0
+
+    # Fallback to time-of-day keywords
+    if hour is None:
         if "בוקר" in text:
             hour, minute = 10, 0
         elif "צהריים" in text:
             hour, minute = 13, 0
-        elif 'אחה"צ' in text or "אחרי" in text:
+        elif "אחרי" in text:
             hour, minute = 15, 0
         elif "ערב" in text:
             hour, minute = 18, 0
         else:
+            print(f"parse_availability: no time found in '{text}' (cleaned: '{cleaned}')")
             return None
-    else:
-        hour = int(time_match.group(1))
-        minute = int(time_match.group(2))
 
-    if found_day is None:
-        return None
-
+    # --- Step 5: compute the next occurrence of the target weekday ---
     today = datetime.now()
     days_ahead = found_day - today.weekday()
     if days_ahead <= 0:
@@ -63,10 +111,12 @@ def parse_availability(text: str):
         hour=hour, minute=minute, second=0, microsecond=0
     )
     end_dt = start_dt + timedelta(hours=1)
+
+    print(f"parse_availability: '{text}' -> {start_dt.strftime('%A %d.%m %H:%M')}")
     return start_dt, end_dt
 
 
-def is_arik_available(start_dt: datetime, end_dt: datetime) -> bool:
+def is_arik_available(start_dt, end_dt):
     try:
         service = get_service()
         utc_start = (start_dt - timedelta(hours=3)).isoformat() + "Z"
@@ -87,22 +137,21 @@ def is_arik_available(start_dt: datetime, end_dt: datetime) -> bool:
                 return False
         return True
     except Exception as e:
-        print(f"Freebusy error: {e}")
+        print("Freebusy error: " + str(e))
         return True
 
 
-def create_event(full_name: str, phone: str, start_dt: datetime, end_dt: datetime, client_email: str = "") -> bool:
+def create_event(full_name, phone, start_dt, end_dt, client_email=""):
     try:
         service = get_service()
-
-        # כל המשתתפים — אריק + הלקוח (אם יש מייל)
-        attendees = [{"email": ARIK_CALENDAR_ID}]
+        attendees = []
+        if ARIK_CALENDAR_ID and "@" in ARIK_CALENDAR_ID:
+            attendees.append({"email": ARIK_CALENDAR_ID})
         if client_email and "@" in client_email:
             attendees.append({"email": client_email})
-
         event = {
-            "summary": f"שיחת ייעוץ — {full_name}",
-            "description": f"טלפון: {phone}\nנקבע אוטומטית על ידי AUTOBOT",
+            "summary": "שיחת ייעוץ - " + full_name,
+            "description": "טלפון: " + phone + "\nנקבע אוטומטית על ידי AUTOBOT",
             "start": {"dateTime": start_dt.isoformat(), "timeZone": "Asia/Jerusalem"},
             "end": {"dateTime": end_dt.isoformat(), "timeZone": "Asia/Jerusalem"},
             "attendees": attendees,
@@ -117,16 +166,16 @@ def create_event(full_name: str, phone: str, start_dt: datetime, end_dt: datetim
         service.events().insert(
             calendarId=AUTOBOT_CALENDAR_ID,
             body=event,
-            sendUpdates="none"  # המייל נשלח מ-email_sender.py עם כפתור יפה
+            sendUpdates="all"
         ).execute()
-        print(f"Meeting created: {full_name} at {start_dt} (invite sent to: {client_email or 'no client email'})")
+        print("Meeting created: " + full_name + " at " + str(start_dt))
         return True
     except Exception as e:
-        print(f"Create event error: {e}")
+        print("Create event error: " + str(e))
         return False
 
 
-def get_available_slots(days_ahead: int = 6) -> list:
+def get_available_slots(days_ahead=6):
     try:
         service = get_service()
         today = datetime.now()
@@ -134,17 +183,16 @@ def get_available_slots(days_ahead: int = 6) -> list:
         candidate_hours = [9, 10, 11, 14, 15, 16, 17]
         days_checked = 0
         delta = 1
-
         while days_checked < days_ahead:
             candidate_day = today + timedelta(days=delta)
             delta += 1
             weekday = candidate_day.weekday()
-            if weekday == 5:  # שבת
+            if weekday == 5:
                 continue
             days_checked += 1
 
             for hour in candidate_hours:
-                if weekday == 4 and hour >= 14:  # שישי — בוקר בלבד
+                if weekday == 4 and hour >= 14:
                     continue
                 start_dt = candidate_day.replace(hour=hour, minute=0, second=0, microsecond=0)
                 end_dt = start_dt + timedelta(hours=1)
@@ -168,11 +216,11 @@ def get_available_slots(days_ahead: int = 6) -> list:
 
         return slots
     except Exception as e:
-        print(f"get_available_slots error: {e}")
+        print("get_available_slots error: " + str(e))
         return []
 
 
-def format_slots_for_prompt(slots: list) -> str:
+def format_slots_for_prompt(slots):
     if not slots:
         return "אין מידע על זמינות כרגע"
     day_names = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
@@ -181,24 +229,69 @@ def format_slots_for_prompt(slots: list) -> str:
         day = day_names[s.weekday()]
         date_str = s.strftime("%d.%m")
         time_str = s.strftime("%H:%M")
-        lines.append(f"יום {day} {date_str} בשעה {time_str}")
+        lines.append("יום " + day + " " + date_str + " בשעה " + time_str)
     return "\n".join(lines)
 
 
-def book_meeting(full_name: str, phone: str, availability_str: str, client_email: str = ""):
-    """
-    מחזיר (True, start_dt) אם הפגישה נקבעה, (False, None) אחרת.
-    """
+def book_meeting(full_name, phone, availability_str, client_email=""):
     result = parse_availability(availability_str)
     if not result:
-        print(f"Could not parse availability: {availability_str}")
+        print("Could not parse availability: " + availability_str)
         return False, None
 
     start_dt, end_dt = result
 
     if is_arik_available(start_dt, end_dt):
-        ok = create_event(full_name, phone, start_dt, end_dt, client_email)
-        return ok, start_dt if ok else None
+        booked = create_event(full_name, phone, start_dt, end_dt, client_email)
+        if booked:
+            from sheets import save_reminder
+            save_reminder(phone, start_dt)
+        return booked, start_dt
     else:
-        print(f"Arik is busy at {start_dt} — meeting not booked")
+        print("Arik is busy at " + str(start_dt))
         return False, None
+
+
+def create_event_simple(full_name, phone, start_dt, end_dt, client_email=""):
+    """Create a calendar event in AUTOBOT calendar without checking Arik's availability.
+    Adds client as attendee so they get a calendar invite automatically from Google."""
+    try:
+        service = get_service()
+        attendees = []
+        if client_email and "@" in client_email:
+            attendees.append({"email": client_email})
+
+        event = {
+            "summary": "שיחת ייעוץ - " + full_name,
+            "description": "טלפון: " + phone + "\nנקבע אוטומטית על ידי AUTOBOT",
+            "start": {"dateTime": start_dt.isoformat(), "timeZone": "Asia/Jerusalem"},
+            "end": {"dateTime": end_dt.isoformat(), "timeZone": "Asia/Jerusalem"},
+            "attendees": attendees,
+            "reminders": {
+                "useDefault": False,
+                "overrides": [
+                    {"method": "email", "minutes": 60},
+                    {"method": "popup", "minutes": 15}
+                ]
+            }
+        }
+
+        created = service.events().insert(
+            calendarId=AUTOBOT_CALENDAR_ID,
+            body=event,
+            sendUpdates="all"
+        ).execute()
+
+        print(f"[create_event_simple] Event created: {created.get('id')} for {full_name} at {start_dt}")
+
+        # Also save reminder to sheets
+        try:
+            from sheets import save_reminder
+            save_reminder(phone, start_dt)
+        except Exception as e:
+            print(f"[create_event_simple] save_reminder failed: {e}")
+
+        return True
+    except Exception as e:
+        print(f"[create_event_simple] ERROR: {e}")
+        return False

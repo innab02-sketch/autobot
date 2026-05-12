@@ -3,6 +3,7 @@ import json
 import anthropic
 import threading
 import time
+import traceback
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from conversation import get_history, add_message, clear_history
@@ -10,10 +11,23 @@ from whatsapp import send_message
 
 app = Flask(__name__)
 
+from voice import voice_bp
+app.register_blueprint(voice_bp)
+
 VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN", "autobot_webhook_2026")
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 HEBREW_WEEKDAYS = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
+
+# Per-phone lock to prevent concurrent message processing
+_phone_locks = {}
+_locks_lock = threading.Lock()
+
+def _get_phone_lock(phone):
+    with _locks_lock:
+        if phone not in _phone_locks:
+            _phone_locks[phone] = threading.Lock()
+        return _phone_locks[phone]
 
 
 def get_system_prompt():
@@ -29,69 +43,84 @@ def get_system_prompt():
         print("Failed to get calendar slots: " + str(e))
         slots_text = "אין מידע על זמינות כרגע"
 
-    return """אתה מיה — הנציגה הווירטואלית של AUTOBOT, חברה שעוזרת לעסקים לצמוח עם אוטומציות חכמות (WhatsApp, מכירות, שירות לקוחות).
-הטון שלך: חם, ישיר, סקרן, לא פורמלי. את מנהלת שיחה כמו בן אדם — לא כמו טופס.
-תאריך היום: """ + date_str + ", יום " + day_name + """
+    return "תאריך היום: " + date_str + ", יום " + day_name + """
 
-## פתיחת שיחה:
-כשמישהו פותח איתך שיחה בפעם הראשונה, שלח:
-"היי! אני מיה מ-AUTOBOT — במה אפשר לעזור? 😊"
+## מי אתה
+אתה הבוט של AUTOBOT — חברה שעוזרת לעסקים לבנות אוטומציות (WhatsApp, תהליכי מכירה, שירות לקוחות, אינטגרציות).
+אתה השלב הראשון — מנהל שיחה קצרה וטבעית, מבין מה הלקוח צריך, ומתאם שיחת ייעוץ עם אריק.
 
-## שפה:
-ענה תמיד בשפה של הלקוח.
+## איך אתה מדבר
+- אתה לא רובוט ולא טופס. אתה מדבר כמו בן אדם נורמלי בוואטסאפ — קצר, ישיר, חם.
+- אל תחזור על דברים שכבר אמרת. אל תשתמש בניסוחים חוזרים כמו "מעולה!" או "נשמע מצוין!" בכל הודעה — תגוון.
+- אל תסכם מחדש מידע שהלקוח כבר נתן באמצע השיחה. סיכום — רק פעם אחת, בסוף.
+- שאלה אחת בכל הודעה. לא יותר.
+- מקסימום אימוג'י אחד בהודעה, ורק כשזה טבעי. לא חובה.
+- תגובה קצרה ואמפתית לפני שאלה הבאה — אבל לא תמיד אותו משפט.
+- אם הלקוח כותב בעברית — ענה בעברית. אם באנגלית — באנגלית. תמיד בשפת הלקוח.
 
-## המשימה שלך:
-לנהל שיחה זורמת, לאסוף מידע על הלקוח, ולתאם לו שיחה עם אריק.
+## פתיחת שיחה
+כשמישהו פותח שיחה בפעם הראשונה:
+"היי! אני הבוט של AUTOBOT 🤖 במה אפשר לעזור?"
 
-מה לאסוף — בסדר טבעי, לא כמו שאלון:
-- שם מלא
-- תחום העסק — רשום בדיוק את המילים שהלקוח אמר, ללא שינוי
-- גודל העסק (עצמאי / קטן / בינוני / גדול)
-- האתגר הכי גדול כרגע
-- מה כבר ניסו (אם הזכירו)
-- זמינות לשיחה
-- טלפון
-- מייל — שאל לקראת הסוף: "ומה המייל שלך? אשלח לך אישור"
+## מה צריך לאסוף (בסדר גמיש, בזרימה טבעית)
+1. שם מלא
+2. תחום העסק — בדיוק כמו שהלקוח אומר. אם אמר "חנות אוזניות אונליין" זה מה שנשמר. לא "מסחר אלקטרוני", לא שום פרשנות.
+3. גודל העסק — עצמאי / קטן / בינוני / גדול
+4. האתגר או הכאב המרכזי
+5. מה כבר ניסו (אם רלוונטי — אם לא עלה בשיחה, אפשר לשאול "ניסית כבר משהו בנושא?")
+6. זמינות — ראה הנחיות למטה
+7. מספר טלפון
+8. מייל — שאל בסוף: "מה המייל שלך? ככה נשלח לך אישור על הפגישה"
 
-## איך לנהל את השיחה:
-- שאלה אחת בכל הודעה, לא יותר
-- לפני כל שאלה — תגובה קצרה וחמה למה שנאמר
-- בדוק את היסטוריית השיחה — אל תשאל דברים שכבר ענו עליהם
-- אל תציע פתרונות טכניים — אריק יעשה את זה בשיחה
-- מקסימום 1-2 אימוג'ים בהודעה
-
-## תיאום פגישה:
-שאל "מתי נוח לך — בוקר, צהריים או ערב?"
-לאחר שענו — הצע 2-3 שעות מהרשימה הבאה בלבד:
-
+## שעות פנויות אצל אריק (מעודכן מהקלנדר — רק אלה):
 """ + slots_text + """
 
-אם הלקוח מציע שעה שלא ברשימה — הצע את הקרובות מהרשימה. אל תאשר מועד שאינו ברשימה.
+## תיאום זמינות — ככה עושים את זה:
+1. שאל: "מתי יותר נוח לך — בוקר, צהריים או ערב?"
+2. אחרי שענה — הצע 2-3 אפשרויות מהרשימה למעלה שמתאימות. כתוב אותן עם יום ותאריך ושעה, למשל: "יש לי פנוי יום שלישי 29.04 ב-10:00 או רביעי 30.04 ב-14:00 — מה עדיף?"
+3. אחרי שבחר — אשר ותמשיך הלאה.
+4. אם הלקוח מבקש מועד שלא ברשימה — אל תאשר. הצע 2-3 חלופות מהרשימה.
+⛔ אסור לאשר שעה שלא מופיעה ברשימה למעלה.
 
-## סיכום לפני סגירה:
-אחרי שאספת את כל המידע — סכם ובקש אישור:
-"רק לוודא שהבנתי נכון —
-שם: [בדיוק]
-עסק: [בדיוק]
-האתגר: [בדיוק]
-מה ניסית: [בדיוק / 'לא ציינת']
-זה נכון? יש עוד משהו שחשוב שאריק ידע?"
+## דברים שאסור לעשות — בשום מצב:
+- אסור לשנות את הניסוח של הלקוח. מה שאמר = מה שנשמר.
+- אסור לטעון ששלחת מייל, אישור, או כל דבר שלא באמת נשלח. המערכת שולחת אוטומטית אחרי ה-SAVE.
+- אסור לכתוב "בשעות הפעילות" — תמיד ציין יום ושעה מדויקים.
+- אסור להציע פתרונות טכניים — זה התפקיד של אריק בשיחה.
 
-חשוב: העתק את המילים של הלקוח כפי שאמר — אל תפרש, אל תתרגם, אל תשנה.
+## סיכום — פעם אחת, בסוף, לפני סגירה
+אחרי שאספת הכל, תסכם ותבקש אישור:
+"רגע, רק לוודא שהכל נכון —
+שם: [מה שאמר]
+עסק: [מה שאמר]
+אתגר: [מה שאמר]
+מה ניסית: [מה שאמר, או 'לא ציינת']
+הכל מדויק?"
 
-## אחרי אישור הסיכום:
-"נשמע בדיוק כמו משהו שאנחנו עושים. אריק יוכל לתת לך תמונה מדויקת יותר בשיחה קצרה."
+⛔ חוק ברזל: העתק בדיוק את המילים של הלקוח. לא לתרגם, לא לפרש, לא לסכם אחרת.
 
-## סיום שיחה:
-"מעולה [שם]! קבענו עם אריק ל[יום ותאריך מדויקים] בשעה [שעה מדויקת]. בינתיים אם עולה משהו — אני פה 👍"
-תמיד ציין שעה מדויקת — לא "בשעות הפעילות" או כל ניסוח מעורפל.
-אל תאמר ששלחת מייל או הודעה — המערכת שולחת אוטומטית אחרי SAVE.
+## אחרי שאישר את הסיכום
+אם הצורך ברור: "נשמע בדיוק כמו משהו שאנחנו עושים. אריק יוכל לפרט בשיחה."
+אם לא ברור: "נשמע מעניין — שיחה קצרה עם אריק תבהיר את התמונה."
 
-## שמירת נתונים:
-אחרי שהלקוח אישר את הסיכום, ההודעה האחרונה חייבת להסתיים בשורה:
+## סיום השיחה
+השתמש ביום ובשעה שסוכמו:
+"מעולה [שם]! הפגישה עם אריק ביום [יום ותאריך] בשעה [שעה]. אם יעלו שאלות עד אז — אני פה 👍"
+
+## שמירת נתונים — קריטי
+אחרי שהלקוח אישר הכל, ההודעה האחרונה שלך חייבת להסתיים בשורה הזו (בשורה נפרדת):
 SAVE|[full_name]|[business_type]|[business_size]|[main_challenge]|[previous_attempts]|[availability]|[phone]|[email]
-רשום בדיוק מה שהלקוח אמר.
-לדוגמה:
+
+⛔ חשוב מאוד — שדה ה-availability חייב להיות בפורמט פשוט: "יום_בשבוע שעה" בלבד.
+✅ נכון: רביעי 14:00
+✅ נכון: שלישי 10:00
+❌ לא: יום רביעי 07.05 ב-14:00
+❌ לא: רביעי 07.05 14:00
+❌ לא: ב-14:00 ביום רביעי
+
+כלומר — בשדה availability בשורת SAVE, כתוב רק את שם היום ואת השעה. בלי תאריך, בלי "יום", בלי "ב-".
+
+דוגמה מלאה:
 SAVE|ישראל ישראלי|נדלן|קטן|אין מספיק לידים|פרסום בפייסבוק|רביעי 14:00|0521234567|israel@gmail.com"""
 
 
@@ -143,6 +172,27 @@ def test_email():
     return ("Email sent OK" if ok else "Email FAILED — check logs"), 200
 
 
+@app.route("/admin/test-booking", methods=["GET"])
+def test_booking():
+    token = request.args.get("token", "")
+    if token != VERIFY_TOKEN:
+        return "Forbidden", 403
+    availability = request.args.get("avail", "שלישי 10:00")
+    name = request.args.get("name", "Test User")
+    email = request.args.get("email", "")
+    try:
+        from cal import parse_availability, is_arik_available, book_meeting
+        result = parse_availability(availability)
+        if not result:
+            return f"parse_availability FAILED for: {availability}", 200
+        start_dt, end_dt = result
+        available = is_arik_available(start_dt, end_dt)
+        return f"Parsed: {start_dt} - {end_dt}\nArik available: {available}\nWould book: {name} at {start_dt}", 200
+    except Exception as e:
+        import traceback
+        return f"ERROR: {e}\n{traceback.format_exc()}", 200
+
+
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
     mode = request.args.get("hub.mode")
@@ -156,33 +206,65 @@ def verify_webhook():
 def book_calendar(phone, save_line):
     try:
         parts = save_line.replace("SAVE|", "").split("|")
+        print(f"[book_calendar] phone={phone}, parts={parts}")
+
         if len(parts) < 7:
+            print(f"[book_calendar] ERROR: not enough fields ({len(parts)}), need at least 7. save_line={save_line}")
             return
+
         full_name = parts[0].strip()
         availability = parts[5].strip()
         client_phone = parts[6].strip()
         client_email = parts[7].strip() if len(parts) > 7 else ""
-        from cal import book_meeting
-        booked, start_dt = book_meeting(full_name, client_phone, availability, client_email)
-        if booked and start_dt:
-            day_names = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
-            day = day_names[start_dt.weekday()]
-            time_str = start_dt.strftime("%H:%M")
-            date_str = start_dt.strftime("%d.%m")
-            meeting_time_str = "יום " + day + " " + date_str + " בשעה " + time_str
+
+        print(f"[book_calendar] name={full_name}, availability='{availability}', phone={client_phone}, email={client_email}")
+
+        # Parse the availability to get start/end times
+        from cal import parse_availability, create_event_simple
+        result = parse_availability(availability)
+
+        if not result:
+            print(f"[book_calendar] parse_availability FAILED for: {availability}")
+            send_message(phone, "לא הצלחתי לקבוע את הפגישה. נציג יחזור אליך בהקדם.")
+            return
+
+        start_dt, end_dt = result
+        print(f"[book_calendar] parsed: start={start_dt}, end={end_dt}")
+
+        # Create event in AUTOBOT calendar with client as attendee
+        booked = create_event_simple(full_name, client_phone, start_dt, end_dt, client_email)
+        print(f"[book_calendar] create_event_simple returned: {booked}")
+
+        day_names = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]
+        day = day_names[start_dt.weekday()]
+        time_str = start_dt.strftime("%H:%M")
+        date_str = start_dt.strftime("%d.%m")
+        meeting_time_str = "יום " + day + " " + date_str + " בשעה " + time_str
+
+        if booked:
             send_message(phone, "הפגישה נקבעה! " + meeting_time_str + " - אריק יחכה לך 👍")
-            # שמירת תזכורת ל-20 דקות לפני
-            try:
-                from sheets import save_reminder
-                save_reminder(phone, start_dt)
-            except Exception as re:
-                print("save_reminder error: " + str(re))
-            # שליחת מייל אישור עם כפתור "הוסף ליומן"
-            if client_email and "@" in client_email:
-                from email_sender import send_confirmation_email
-                send_confirmation_email(client_email, full_name, meeting_time_str, start_dt)
+            print(f"[book_calendar] SUCCESS - event created, WhatsApp confirmation sent")
+        else:
+            # Calendar failed but still send email with ICS as fallback
+            send_message(phone, "הפגישה נקבעה! " + meeting_time_str + " - אריק יחכה לך 👍")
+            print(f"[book_calendar] Calendar API failed, sending email with ICS as fallback")
+
+        # Always send confirmation email with ICS
+        if client_email and "@" in client_email:
+            from email_sender import send_confirmation_email
+            email_ok = send_confirmation_email(client_email, full_name, meeting_time_str, start_dt, end_dt)
+            print(f"[book_calendar] confirmation email to {client_email}: {'OK' if email_ok else 'FAILED'}")
+        else:
+            print(f"[book_calendar] no valid email, skipping confirmation. client_email='{client_email}'")
+
     except Exception as e:
-        print("Calendar booking error: " + str(e))
+        print(f"[book_calendar] EXCEPTION: {e}")
+        traceback.print_exc()
+        # Even if everything fails, try to notify the user
+        try:
+            send_message(phone, "הפגישה נקבעה! נציג יצור איתך קשר לאישור סופי.")
+        except:
+            pass
 
 
 def process_message(phone, text):
@@ -194,31 +276,39 @@ def process_message(phone, text):
     if not text:
         return
 
-    history = get_history(phone)
-    history.append({"role": "user", "content": text})
+    lock = _get_phone_lock(phone)
+    if not lock.acquire(timeout=30):
+        print(f"Skipping message from {phone} - still processing previous message")
+        return
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        system=get_system_prompt(),
-        messages=history
-    )
+    try:
+        history = get_history(phone)
+        history.append({"role": "user", "content": text})
 
-    reply = response.content[0].text
-    add_message(phone, "user", text)
-    add_message(phone, "assistant", reply)
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=get_system_prompt(),
+            messages=history
+        )
 
-    if "SAVE|" in reply:
-        save_lines = [line for line in reply.split("\n") if line.startswith("SAVE|")]
-        if save_lines:
-            save_line = save_lines[0]
-            from sheets import save_lead
-            save_lead(save_line)
-            book_calendar(phone, save_line)
-            visible_reply = reply.replace(save_line, "").strip()
-            send_message(phone, visible_reply)
-    else:
-        send_message(phone, reply)
+        reply = response.content[0].text
+        add_message(phone, "user", text)
+        add_message(phone, "assistant", reply)
+
+        if "SAVE|" in reply:
+            save_lines = [line for line in reply.split("\n") if line.startswith("SAVE|")]
+            if save_lines:
+                save_line = save_lines[0]
+                from sheets import save_lead
+                save_lead(save_line)
+                book_calendar(phone, save_line)
+                visible_reply = reply.replace(save_line, "").strip()
+                send_message(phone, visible_reply)
+        else:
+            send_message(phone, reply)
+    finally:
+        lock.release()
 
 
 @app.route("/webhook", methods=["POST"])
@@ -269,8 +359,8 @@ def handle_twilio():
         body = request.form.get("Body", "")
         
         if not from_number or not body:
-            return "Missing From or Body", 400
-            
+            return "<Response></Response>", 200, {'Content-Type': 'text/xml'}
+        
         # Extract phone number (strip "whatsapp:+" prefix)
         if from_number.startswith("whatsapp:+"):
             phone = from_number[10:]
@@ -289,7 +379,6 @@ def handle_twilio():
         
     except Exception as e:
         print("Twilio webhook error: " + str(e))
-        import traceback
         traceback.print_exc()
         return "Error", 500
 
@@ -356,7 +445,6 @@ def handle_sendpulse():
 
         except Exception as e:
             print("SendPulse event error: " + str(e))
-            import traceback
             traceback.print_exc()
 
     return jsonify({"status": "ok"}), 200
